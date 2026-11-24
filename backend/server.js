@@ -501,243 +501,311 @@ app.post('/api/templates/upload-sample', rawFileParser, async (req, res) => {
 });
 
 /* =========================================
+   TEMPLATE BUILDING (shared by create + edit)
+========================================= */
+
+const TEMPLATE_CATEGORIES = ['MARKETING', 'UTILITY'];
+
+// Accepts buttons as plain strings (quick reply) or objects:
+//   { type: 'QUICK_REPLY', text }
+//   { type: 'URL', text, url }              (fixed https link, no {{variables}})
+//   { type: 'PHONE_NUMBER', text, phone }   (number with country code)
+// Meta wants call-to-action buttons first and quick replies grouped after them.
+function buildTemplateButtons(rawButtons) {
+  if (rawButtons === undefined || rawButtons === null) return { buttons: [] };
+
+  if (!Array.isArray(rawButtons) || rawButtons.length > 10) {
+    return { error: 'Provide up to 10 buttons.' };
+  }
+
+  const cta = [];
+  const quick = [];
+  let urlCount = 0;
+  let phoneCount = 0;
+
+  for (const item of rawButtons) {
+    const button = typeof item === 'string' ? { type: 'QUICK_REPLY', text: item } : item || {};
+    const type = String(button.type || 'QUICK_REPLY').toUpperCase();
+    const text = String(button.text || '').trim();
+
+    if (!text || text.length > 25) {
+      return { error: 'Every button needs a label of 1–25 characters.' };
+    }
+
+    if (type === 'QUICK_REPLY') {
+      quick.push({ type: 'QUICK_REPLY', text });
+    } else if (type === 'URL') {
+      const url = String(button.url || '').trim();
+
+      if (!/^https:\/\/[^\s{}]+$/i.test(url) || url.length > 2000) {
+        return {
+          error: `Button "${text}": enter a full https:// link without variables (dynamic {{1}} links are not supported by the sender).`,
+        };
+      }
+
+      urlCount += 1;
+      cta.push({ type: 'URL', text, url });
+    } else if (type === 'PHONE_NUMBER') {
+      const digits = String(button.phone || button.phone_number || '').replace(/\D/g, '');
+
+      if (digits.length < 8 || digits.length > 15) {
+        return { error: `Button "${text}": enter the phone number with country code, e.g. +919876543210.` };
+      }
+
+      phoneCount += 1;
+      cta.push({ type: 'PHONE_NUMBER', text, phone_number: `+${digits}` });
+    } else {
+      return { error: `Unsupported button type "${type}".` };
+    }
+  }
+
+  if (urlCount > 2) return { error: 'A template can have at most 2 website buttons.' };
+  if (phoneCount > 1) return { error: 'A template can have at most 1 call button.' };
+
+  return { buttons: [...cta, ...quick] };
+}
+
+// Returns { components } or { error }.
+function buildTemplateComponents(input = {}) {
+  const {
+    header,
+    headerFormat = 'TEXT',
+    headerHandle,
+    body,
+    footer,
+    buttons,
+    bodyExamples,
+  } = input;
+
+  const components = [];
+
+  if (typeof body !== 'string' || !body.trim() || body.length > 1024) {
+    return { error: 'Template body is required (maximum 1024 characters).' };
+  }
+
+  // HEADER
+  if (header !== undefined && header !== null && typeof header !== 'string') {
+    return { error: 'Header must be text.' };
+  }
+
+  const format = String(headerFormat || 'TEXT').toUpperCase();
+
+  if (['IMAGE', 'VIDEO', 'DOCUMENT'].includes(format)) {
+    if (typeof headerHandle !== 'string' || !headerHandle.trim()) {
+      return {
+        error: `${format} header needs a sample file. Upload one first (headerHandle missing).`,
+      };
+    }
+
+    components.push({
+      type: 'HEADER',
+      format,
+      example: { header_handle: [headerHandle.trim()] },
+    });
+  } else if (header?.trim()) {
+    if (header.length > 60) return { error: 'Text header cannot exceed 60 characters.' };
+    if (/\{\{/.test(header)) return { error: 'Text headers cannot contain variables here.' };
+
+    components.push({ type: 'HEADER', format: 'TEXT', text: header.trim() });
+  }
+
+  // BODY
+  const bodyText = body.trim();
+  const numbers = [...bodyText.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]));
+  const unique = [...new Set(numbers)].sort((a, b) => a - b);
+
+  if (unique.some((number, index) => number !== index + 1)) {
+    return { error: 'Body variables must be sequential, starting from {{1}}.' };
+  }
+
+  if (/^\s*\{\{\d+\}\}/.test(bodyText) || /\{\{\d+\}\}\s*$/.test(bodyText)) {
+    return { error: 'Meta does not allow the body to start or end with a variable. Add some text before/after it.' };
+  }
+
+  if (/\{\{\d+\}\}\s*\{\{\d+\}\}/.test(bodyText)) {
+    return { error: 'Two variables cannot sit side by side. Put text between them.' };
+  }
+
+  const bodyComponent = { type: 'BODY', text: bodyText };
+
+  if (unique.length > 0) {
+    if (
+      !Array.isArray(bodyExamples) ||
+      bodyExamples.length !== unique.length ||
+      bodyExamples.some((value) => typeof value !== 'string' || !value.trim())
+    ) {
+      return { error: `Provide ${unique.length} body example values in bodyExamples.` };
+    }
+
+    bodyComponent.example = { body_text: [bodyExamples.map((value) => value.trim())] };
+  }
+
+  components.push(bodyComponent);
+
+  // FOOTER
+  if (footer !== undefined && footer !== null && typeof footer !== 'string') {
+    return { error: 'Footer must be text.' };
+  }
+
+  if (footer?.trim()) {
+    if (footer.length > 60) return { error: 'Footer cannot exceed 60 characters.' };
+    components.push({ type: 'FOOTER', text: footer.trim() });
+  }
+
+  // BUTTONS
+  const built = buildTemplateButtons(buttons);
+  if (built.error) return { error: built.error };
+
+  if (built.buttons.length > 0) {
+    components.push({ type: 'BUTTONS', buttons: built.buttons });
+  }
+
+  return { components };
+}
+
+/* =========================================
    CREATE WHATSAPP TEMPLATE ON META
    POST /api/templates
 ========================================= */
 
-app.post("/api/templates", async (req, res) => {
+app.post('/api/templates', async (req, res) => {
   if (!requireWabaConfig(res)) return;
 
-const {
-  name,
-  category,
-  language,
-  header,
-  headerFormat = 'TEXT',
-  headerHandle,
-  body,
-  footer,
-  buttons = [],
-} = req.body || {};
+  const { name, category, language } = req.body || {};
 
-    if (
-      typeof name !== "string" ||
-      !/^[a-z0-9_]{1,512}$/.test(name)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Template name must contain lowercase letters, numbers and underscores.",
-      });
-    }
-
-    const allowedCategories = [
-      "MARKETING",
-      "UTILITY",
-    ];
-
-    if (!allowedCategories.includes(category)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid template category.",
-      });
-    }
-
-    if (
-      typeof language !== "string" ||
-      !/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(language)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid language code.",
-      });
-    }
-
-    if (
-      typeof body !== "string" ||
-      !body.trim() ||
-      body.length > 1024
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Template body is required (maximum 1024 characters).",
-      });
-    }
-
-   const components = [];
-
-// HEADER validation
-if (header !== undefined && typeof header !== "string") {
-  return res.status(400).json({
-    success: false,
-    message: "Header must be text.",
-  });
-}
-
-const normalizedHeaderFormat = String(headerFormat || "TEXT").toUpperCase();
-
-if (["IMAGE", "VIDEO", "DOCUMENT"].includes(normalizedHeaderFormat)) {
-  // Media header: Meta needs a handle from the Resumable Upload API.
-  if (typeof headerHandle !== "string" || !headerHandle.trim()) {
+  if (typeof name !== 'string' || !/^[a-z0-9_]{1,512}$/.test(name)) {
     return res.status(400).json({
       success: false,
-      message: `${normalizedHeaderFormat} header needs a sample file. Upload one first (headerHandle missing).`,
+      message: 'Template name must contain lowercase letters, numbers and underscores.',
     });
   }
 
-  components.push({
-    type: "HEADER",
-    format: normalizedHeaderFormat,
-    example: { header_handle: [headerHandle.trim()] },
-  });
-} else if (header?.trim()) {
-  if (header.length > 60) {
-    return res.status(400).json({
-      success: false,
-      message: "Text header cannot exceed 60 characters.",
-    });
+  if (!TEMPLATE_CATEGORIES.includes(category)) {
+    return res.status(400).json({ success: false, message: 'Invalid template category.' });
   }
 
-  components.push({
-    type: "HEADER",
-    format: "TEXT",
-    text: header.trim(),
-  });
-}
-
-// BODY variables and examples
-const bodyText = body.trim();
-const bodyVariables = [...bodyText.matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1]));
-
-const uniqueBodyVariables = [...new Set(bodyVariables)].sort(
-  (a, b) => a - b
-);
-
-// Require sequential variable placeholders: {{1}}, {{2}}, etc.
-if (
-  uniqueBodyVariables.some(
-    (number, index) => number !== index + 1
-  )
-) {
-  return res.status(400).json({
-    success: false,
-    message: "Body variables must be sequential, starting from {{1}}.",
-  });
-}
-
-const bodyComponent = {
-  type: "BODY",
-  text: bodyText,
-};
-
-if (uniqueBodyVariables.length > 0) {
-  const bodyExamples = req.body.bodyExamples;
-
-  if (
-    !Array.isArray(bodyExamples) ||
-    bodyExamples.length !== uniqueBodyVariables.length ||
-    bodyExamples.some(
-      (value) => typeof value !== "string" || !value.trim()
-    )
-  ) {
-    return res.status(400).json({
-      success: false,
-      message: `Provide ${uniqueBodyVariables.length} body example values in bodyExamples.`,
-    });
+  if (typeof language !== 'string' || !/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(language)) {
+    return res.status(400).json({ success: false, message: 'Invalid language code.' });
   }
 
-  bodyComponent.example = {
-    body_text: [bodyExamples],
-  };
-}
-
-components.push(bodyComponent);
-
-// FOOTER
-if (footer !== undefined && typeof footer !== "string") {
-  return res.status(400).json({
-    success: false,
-    message: "Footer must be text.",
-  });
-}
-
-if (footer?.trim()) {
-  if (footer.length > 60) {
-    return res.status(400).json({
-      success: false,
-      message: "Footer cannot exceed 60 characters.",
-    });
+  const built = buildTemplateComponents(req.body);
+  if (built.error) {
+    return res.status(400).json({ success: false, message: built.error });
   }
 
-  components.push({
-    type: "FOOTER",
-    text: footer.trim(),
-  });
-}
+  try {
+    const result = await callMetaGraphApi(
+      'POST',
+      `${process.env.WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates`,
+      { name, category, language, components: built.components }
+    );
 
-// QUICK REPLY BUTTONS
-if (
-  !Array.isArray(buttons) ||
-  buttons.length > 10 ||
-  buttons.some(
-    (button) =>
-      typeof button !== "string" ||
-      !button.trim() ||
-      button.length > 25
-  )
-) {
-  return res.status(400).json({
-    success: false,
-    message: "Provide up to 10 valid quick reply buttons (maximum 25 characters each).",
-  });
-}
+    return res.status(201).json({
+      success: true,
+      message: 'Template submitted to Meta successfully.',
+      template: {
+        id: result.id,
+        name,
+        language,
+        category: result.category || category,
+        status: result.status || 'PENDING',
+      },
+      metaResponse: result,
+    });
+  } catch (error) {
+    console.error('Meta template creation error:', error.details || error.message);
 
-if (buttons.length > 0) {
-  components.push({
-    type: "BUTTONS",
-    buttons: buttons.map((button) => ({
-      type: "QUICK_REPLY",
-      text: button.trim(),
-    })),
-  });
-}
+    return res.status(error.status || 500).json({
+      success: false,
+      message: error.message,
+      details: error.details || null,
+    });
+  }
+});
 
-try {
-  const result = await callMetaGraphApi(
-    "POST",
-    `${process.env.WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates`,
-    {
-      name,
-      category,
-      language,
-      components,
-    }
-  );
+/* =========================================
+   EDIT A TEMPLATE AND SEND IT BACK TO META REVIEW
+   POST /api/templates/:id/edit
+   Name, language and category cannot change. Meta allows editing
+   APPROVED / REJECTED / PAUSED templates (approved ones: once per
+   24 hours, max 10 edits in 30 days). Meta's own error is passed on.
+========================================= */
 
-  return res.status(201).json({
-    success: true,
-    message: "Template submitted to Meta successfully.",
-    template: {
-      id: result.id,
-      name,
-      language,
-      category,
-      status: "PENDING",
-    },
-    metaResponse: result,
-  });
-} catch (error) {
-  console.error(
-    "Meta template creation error:",
-    error.details || error.message
-  );
+app.post('/api/templates/:id/edit', async (req, res) => {
+  if (!requireWabaConfig(res)) return;
 
-  return res.status(error.status || 500).json({
-    success: false,
-    message: error.message,
-    details: error.details || null,
-  });
-}
+  const templateId = String(req.params.id || '');
+
+  if (!/^\d+$/.test(templateId)) {
+    return res.status(400).json({ success: false, message: 'Invalid template id.' });
+  }
+
+  const built = buildTemplateComponents(req.body);
+  if (built.error) {
+    return res.status(400).json({ success: false, message: built.error });
+  }
+
+  try {
+    const result = await callMetaGraphApi('POST', templateId, {
+      components: built.components,
+    });
+
+    // The edited template is reviewed again: any cached copy is now stale.
+    flowTemplateCache.clear();
+
+    return res.json({
+      success: true,
+      message: 'Template updated and sent to Meta for review.',
+      template: { id: templateId, status: 'PENDING' },
+      metaResponse: result,
+    });
+  } catch (error) {
+    console.error('Meta template edit error:', error.details || error.message);
+
+    return res.status(error.status || 500).json({
+      success: false,
+      message: error.message,
+      details: error.details || null,
+    });
+  }
+});
+
+/* =========================================
+   DELETE A TEMPLATE FROM META
+   DELETE /api/templates/:name?hsm_id=<template id>
+   With hsm_id only that language version is deleted.
+========================================= */
+
+app.delete('/api/templates/:name', async (req, res) => {
+  if (!requireWabaConfig(res)) return;
+
+  const name = String(req.params.name || '');
+  const hsmId = String(req.query.hsm_id || '');
+
+  if (!/^[a-z0-9_]{1,512}$/.test(name) || (hsmId && !/^\d+$/.test(hsmId))) {
+    return res.status(400).json({ success: false, message: 'Invalid template name or id.' });
+  }
+
+  try {
+    await callMetaGraphApi(
+      'DELETE',
+      `${process.env.WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates` +
+        `?name=${encodeURIComponent(name)}` +
+        (hsmId ? `&hsm_id=${hsmId}` : '')
+    );
+
+    flowTemplateCache.clear();
+
+    return res.json({ success: true, message: 'Template deleted from Meta.' });
+  } catch (error) {
+    console.error('Meta template delete error:', error.details || error.message);
+
+    return res.status(error.status || 500).json({
+      success: false,
+      message: error.message,
+      details: error.details || null,
+    });
+  }
 });
 
 
@@ -1260,6 +1328,18 @@ try {
   templateBodyVars = new Set(
     [...String(metaBody?.text || "").matchAll(/\{\{(\d+)\}\}/g)].map((m) => m[1])
   ).size;
+
+  const dynamicButton = (approvedTemplate.components || [])
+    .filter((part) => part.type === "BUTTONS")
+    .flatMap((part) => part.buttons || [])
+    .find((button) => button.type === "URL" && /\{\{\d+\}\}/.test(button.url || ""));
+
+  if (dynamicButton) {
+    return res.status(400).json({
+      success: false,
+      message: `Template button "${dynamicButton.text}" uses a dynamic link ({{1}}). Campaigns support fixed links only.`,
+    });
+  }
 
   if (
     ["IMAGE", "VIDEO", "DOCUMENT"].includes(templateHeaderFormat) &&
@@ -2089,6 +2169,75 @@ async function runDueJobs() {
 
 setInterval(runDueJobs, 30000);
 
+// Saves a Shopify buyer into the shared contact list (the one the Contacts page
+// and its CSV download use), so every new customer is added automatically.
+// Skips numbers that are already in the list. Never throws: a problem here
+// must not stop the order-confirmation message.
+async function addCustomerToAudience(data) {
+  try {
+    const waId = normalizeFlowPhone(pickShopifyPhone(data));
+    if (!waId) return { added: false, reason: 'no valid phone' };
+
+    const customer = data.customer || {};
+    const address = data.shipping_address || data.billing_address || customer.default_address || {};
+
+    const fullName =
+      [customer.first_name || address.first_name, customer.last_name || address.last_name]
+        .filter(Boolean)
+        .join(' ')
+        .trim() || address.name || 'Shopify Customer';
+
+    const existing = await Audience.findOne({ key: 'default' }, { contacts: 1 }).lean();
+    const list = existing?.contacts || [];
+
+    if (list.length >= MAX_AUDIENCE_CONTACTS) {
+      return { added: false, reason: 'contact list is full' };
+    }
+
+    const alreadySaved = list.some(
+      (contact) => String(contact?.phone || '').replace(/\D/g, '') === waId
+    );
+    if (alreadySaved) return { added: false, reason: 'already in contact list' };
+
+    const contact = cleanAudienceContact(
+      {
+        id: Date.now(),
+        initials: fullName
+          .split(/\s+/)
+          .slice(0, 2)
+          .map((part) => part[0] || '')
+          .join('')
+          .toUpperCase(),
+        name: fullName,
+        company: 'Shopify',
+        phone: `+${waId}`,
+        email: data.email || customer.email || '—',
+        country: address.country || 'Unknown',
+        status: 'Valid',
+        // Only pre-select people who agreed to marketing, so a bulk campaign
+        // does not go to customers who never opted in.
+        selected: data.buyer_accepts_marketing === true,
+      },
+      0
+    );
+
+    await Audience.updateOne(
+      { key: 'default' },
+      {
+        $push: { contacts: { $each: [contact], $position: 0 } },
+        $setOnInsert: { fileName: 'Shopify customers' },
+      },
+      { upsert: true }
+    );
+
+    console.log(`Shopify buyer ...${waId.slice(-4)} added to contact list.`);
+    return { added: true };
+  } catch (error) {
+    console.error('Could not add Shopify buyer to contact list:', error.message);
+    return { added: false, reason: error.message };
+  }
+}
+
 // Turns one Shopify webhook into queued jobs.
 async function processShopifyEvent(topic, data, options = {}) {
   const shop = options.shop || '';
@@ -2116,6 +2265,8 @@ async function processShopifyEvent(topic, data, options = {}) {
       console.log(`Shopify order ${data.order_number || data.id}: no phone number, message skipped.`);
       return { queued: false, reason: 'no phone number on the order' };
     }
+
+    await addCustomerToAudience(data); // save the buyer in the contact list
 
     const orderId = data.id ?? data.order_number;
 

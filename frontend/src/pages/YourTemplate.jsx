@@ -257,78 +257,7 @@ function MediaPreview({ media, alt }) {
 
 /* ================= DATA ================= */
 
-const initialTemplates = [
-  {
-    id: 1,
-    name: "diwali_festival_offer_2026",
-    category: "Marketing",
-    language: "English (US)",
-    status: "Approved",
-    header: "Diwali Festival Offer",
-    image:
-      "https://images.unsplash.com/photo-1605379399642-870262d3d051?auto=format&fit=crop&w=600&q=80",
-    body: "Hello {{1}}, celebrate this festive season with an exclusive 20% discount on our collection! Light up your home with our festive hampers. Valid until November 30. Use promo code FESTIVE20 at checkout.",
-    footer: "Limited period offer",
-    buttons: ["Shop Collection", "Call Our Store"],
-    broadcasts: "14,200",
-    delivery: "98.4%",
-    health: "High",
-    created: "Nov 24, 2026",
-    modified: "Nov 25, 2026",
-  },
-  {
-    id: 2,
-    name: "order_delivery_update_v2",
-    category: "Utility",
-    language: "English (US)",
-    status: "Approved",
-    header: "Shipment Update",
-    image: "",
-    body: "Your order {{1}} has been shipped! Hi {{2}}, your order is on its way. Track your delivery and view the latest status using the link below.",
-    footer: "Thank you for shopping with us.",
-    buttons: ["Track Order Link"],
-    broadcasts: "8,430",
-    delivery: "98.6%",
-    health: "High",
-    created: "Nov 24, 2026",
-    modified: "Nov 25, 2026",
-  },
-  {
-    id: 3,
-    name: "vip_loyalty_invitation",
-    category: "Marketing",
-    language: "English (US)",
-    status: "Approved",
-    header: "VIP Membership Invitation",
-    image:
-      "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=600&q=80",
-    body: "Dear {{1}}, you are invited to join our exclusive VIP membership with complimentary concierge access and premium benefits. Activate your membership today to unlock special rewards.",
-    footer: "Exclusive member benefits",
-    buttons: ["Activate VIP Pass"],
-    broadcasts: "2,900",
-    delivery: "88.4%",
-    health: "High",
-    created: "Nov 23, 2026",
-    modified: "Nov 24, 2026",
-  },
-  {
-    id: 4,
-    name: "otp_verification_secure",
-    category: "Authentication",
-    language: "English (US)",
-    status: "Approved",
-    header: "",
-    image: "",
-    body: "Your verification code is {{1}}. Please do not share this code with anyone. It is valid for 5 minutes.",
-    footer: "Keep your account secure.",
-    buttons: ["Copy Code"],
-    broadcasts: "5,200",
-    delivery: "99.9%",
-    health: "High",
-    created: "Nov 23, 2026",
-    modified: "Nov 24, 2026",
-  },
-];
+const initialTemplates = [];
 
 const badgeStyles = {
   Marketing: "bg-emerald-50 text-emerald-700",
@@ -462,7 +391,7 @@ function TemplateCard({
                 }}
                 className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-red-600 hover:bg-red-50"
               >
-                <Trash2 size={14} /> Delete draft
+                <Trash2 size={14} /> Delete
               </button>
             </div>
           )}
@@ -517,32 +446,25 @@ function TemplateCard({
           </div>
 
           <div className="border-t border-slate-100 p-2">
-            {template.buttons.map((button, index) => (
-              <button
-                key={`${button}-${index}`}
-                onClick={
-                  button.toLowerCase().includes("copy")
-                    ? copyCode
-                    : undefined
-                }
-                className="mb-1 flex w-full items-center justify-center gap-1.5 rounded-md border border-slate-100 py-2 text-[10px] font-semibold text-emerald-700 last:mb-0 hover:bg-emerald-50"
-              >
-                {button.toLowerCase().includes("call") ? (
-                  <Phone size={12} />
-                ) : button.toLowerCase().includes("track") ||
-                  button.toLowerCase().includes("shop") ? (
-                  <ExternalLink size={12} />
-                ) : button.toLowerCase().includes("copy") ? (
-                  <Copy size={12} />
-                ) : (
-                  <CheckCheck size={12} />
-                )}
-
-                {button.toLowerCase().includes("copy") && copied
-                  ? "Copied!"
-                  : button}
-              </button>
-            ))}
+            {(template.buttons || []).map(normalizeButton).map((button, index) => {
+              const isCopy = button.text.toLowerCase().includes("copy");
+              const Icon =
+                button.type === "URL" ? ExternalLink
+                : button.type === "PHONE_NUMBER" ? Phone
+                : isCopy ? Copy
+                : CheckCheck;
+              return (
+                <button
+                  key={`${button.text}-${index}`}
+                  onClick={isCopy ? copyCode : undefined}
+                  title={button.type === "URL" ? button.url : button.type === "PHONE_NUMBER" ? button.phone : undefined}
+                  className="mb-1 flex w-full items-center justify-center gap-1.5 rounded-md border border-slate-100 py-2 text-[10px] font-semibold text-emerald-700 last:mb-0 hover:bg-emerald-50"
+                >
+                  <Icon size={12} />
+                  {isCopy && copied ? "Copied!" : button.text}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -625,6 +547,282 @@ const LANGUAGE_FROM_META = {
   hi: "Hindi",
 };
 
+/* ================= BUTTON HELPERS ================= */
+
+const BUTTON_TYPE_LABEL = {
+  QUICK_REPLY: "Quick reply",
+  URL: "Website link",
+  PHONE_NUMBER: "Call button",
+};
+
+// Old drafts store buttons as plain strings; Meta buttons carry a type.
+function normalizeButton(button) {
+  if (typeof button === "string") {
+    return { type: "QUICK_REPLY", text: button, url: "", phone: "" };
+  }
+  return {
+    type: button?.type || "QUICK_REPLY",
+    text: button?.text || "",
+    url: button?.url || "",
+    phone: button?.phone || button?.phone_number || "",
+  };
+}
+
+function validateButtons(list) {
+  const out = [];
+  for (const raw of list || []) {
+    const button = normalizeButton(raw);
+    const text = button.text.trim();
+
+    if (!text) return { error: "Every button needs a label (or remove the empty button)." };
+    if (text.length > 25) return { error: `Button label "${text}" is longer than 25 characters.` };
+
+    if (button.type === "URL") {
+      const url = button.url.trim();
+      if (!/^https:\/\/[^\s{}]+$/i.test(url)) {
+        return { error: `Button "${text}": enter a full https:// link without variables.` };
+      }
+      out.push({ type: "URL", text, url });
+    } else if (button.type === "PHONE_NUMBER") {
+      const digits = button.phone.replace(/\D/g, "");
+      if (digits.length < 8 || digits.length > 15) {
+        return { error: `Button "${text}": enter the phone number with country code, e.g. +919876543210.` };
+      }
+      out.push({ type: "PHONE_NUMBER", text, phone: `+${digits}` });
+    } else {
+      out.push({ type: "QUICK_REPLY", text });
+    }
+  }
+  if (out.filter((b) => b.type === "URL").length > 2) return { error: "Use at most 2 website buttons." };
+  if (out.filter((b) => b.type === "PHONE_NUMBER").length > 1) return { error: "Use at most 1 call button." };
+  if (out.length > 10) return { error: "Use at most 10 buttons." };
+  return { buttons: out };
+}
+
+/* ================= STARTER TEMPLATES =================
+   Names, variable order and variable count match what the backend sends
+   (order_confirmation: name, order no., total. abandoned_cart: name, checkout link).
+   Rules followed so Meta approves them: text never starts/ends with a variable,
+   every variable has an example, links are fixed https links.
+======================================================== */
+
+function buildStarterTemplates({ storeName, storeUrl, phone }) {
+  const store = storeName;
+  const shop = { type: "URL", text: "Visit store", url: storeUrl };
+  const call = phone ? [{ type: "PHONE_NUMBER", text: "Call us", phone }] : [];
+
+  return [
+    {
+      name: "order_confirmation",
+      label: "Order confirmation",
+      purpose: "Sent automatically when a customer places an order.",
+      category: "UTILITY",
+      body: `Hi {{1}}, thank you for your order {{2}} at ${store}. We have received your payment of {{3}} and will update you as soon as it ships.`,
+      bodyExamples: ["Rahul", "#1001", "Rs. 1,499.00"],
+      footer: "Reply here if you need help",
+      buttons: [{ type: "QUICK_REPLY", text: "Need help" }],
+    },
+    {
+      name: "abandoned_cart",
+      label: "Abandoned cart reminder",
+      purpose: "Sent ~45 minutes after checkout is left unfinished.",
+      category: "MARKETING",
+      body: `Hi {{1}}, you left items in your cart at ${store}. Complete your order here: {{2}} Your items may sell out soon.`,
+      bodyExamples: ["Rahul", `${storeUrl}/checkout/abc123`],
+      footer: "",
+      buttons: [shop],
+    },
+    {
+      name: "order_shipped",
+      label: "Order shipped",
+      purpose: "Shopify Flow: send when an order is fulfilled.",
+      category: "UTILITY",
+      body: `Hi {{1}}, good news! Your order {{2}} from ${store} has shipped and is on its way. Track your package here: {{3}} Thank you for shopping with us.`,
+      bodyExamples: ["Rahul", "#1001", `${storeUrl}/track/AB123`],
+      footer: "",
+      buttons: [],
+    },
+    {
+      name: "order_delivered_feedback",
+      label: "Delivered + feedback",
+      purpose: "Shopify Flow: ask for feedback after delivery. Replies open the chat.",
+      category: "MARKETING",
+      body: `Hi {{1}}, your order {{2}} from ${store} was delivered. We hope you love it! How was your experience?`,
+      bodyExamples: ["Rahul", "#1001"],
+      footer: "",
+      buttons: [
+        { type: "QUICK_REPLY", text: "Loved it" },
+        { type: "QUICK_REPLY", text: "Could be better" },
+      ],
+    },
+    {
+      name: "welcome_offer",
+      label: "Welcome / repeat-purchase offer",
+      purpose: "Campaigns: invite new buyers back with a discount code.",
+      category: "MARKETING",
+      body: `Welcome to ${store}, {{1}}! Enjoy {{2}} off your next order with code {{3}}. The offer is valid for 7 days.`,
+      bodyExamples: ["Rahul", "10%", "WELCOME10"],
+      footer: "",
+      buttons: [{ type: "URL", text: "Shop now", url: storeUrl }, ...call],
+    },
+  ].map((item) => ({
+    ...item,
+    language: "en_US",
+    header: "",
+    headerFormat: "TEXT",
+  }));
+}
+
+function StarterPackModal({ existingKeys, onClose, onDone }) {
+  const [storeName, setStoreName] = useState("");
+  const [storeUrl, setStoreUrl] = useState("");
+  const [phone, setPhone] = useState("");
+  const [running, setRunning] = useState(false);
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState("");
+
+  const cleanStore = storeName.replace(/[{}\n\r]/g, " ").trim().slice(0, 40);
+  const cleanUrl = storeUrl.trim().replace(/\/+$/, "");
+  const phoneDigits = phone.replace(/\D/g, "");
+
+  const preview = buildStarterTemplates({
+    storeName: cleanStore || "Your Store",
+    storeUrl: cleanUrl || "https://yourstore.com",
+    phone: phoneDigits ? `+${phoneDigits}` : "",
+  });
+
+  const pending = preview.filter((item) => !existingKeys.has(`${item.name}|en_US`));
+
+  async function submitAll() {
+    setError("");
+
+    if (!cleanStore) return setError("Enter your store name.");
+    if (!/^https:\/\/[^\s{}]+$/i.test(cleanUrl)) {
+      return setError("Enter your store link starting with https://");
+    }
+    if (phoneDigits && (phoneDigits.length < 8 || phoneDigits.length > 15)) {
+      return setError("Support phone must include the country code, e.g. +919876543210.");
+    }
+
+    setRunning(true);
+    const out = [];
+
+    for (const item of pending) {
+      const { label, purpose, ...payload } = item; // eslint-disable-line no-unused-vars
+      try {
+        const response = await fetch(`${API_BASE}/api/templates`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || !data.success) {
+          const detail =
+            data.details?.error?.error_user_msg || data.details?.error?.message || data.message;
+          throw new Error(detail || "Submission failed.");
+        }
+        out.push({ name: item.name, ok: true, text: `Submitted (${data.template?.status || "PENDING"})` });
+      } catch (err) {
+        out.push({ name: item.name, ok: false, text: err.message });
+      }
+      setResults([...out]);
+      await new Promise((resolve) => setTimeout(resolve, 600)); // be gentle with Meta's rate limit
+    }
+
+    setRunning(false);
+    onDone();
+  }
+
+  const inputClass =
+    "mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100";
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-slate-950/40 p-4 backdrop-blur-sm">
+      <div className="my-auto w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 p-5">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Starter templates</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Creates the 5 templates your Shopify automation needs and sends them to Meta for approval.
+            </p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
+            <X size={19} />
+          </button>
+        </div>
+
+        <div className="space-y-4 p-5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <label className="text-xs font-semibold text-slate-700">
+              Store name *
+              <input value={storeName} onChange={(e) => setStoreName(e.target.value)} placeholder="Acme Store" maxLength={40} className={inputClass} />
+            </label>
+            <label className="text-xs font-semibold text-slate-700">
+              Store link *
+              <input value={storeUrl} onChange={(e) => setStoreUrl(e.target.value)} placeholder="https://acme.com" className={inputClass} />
+            </label>
+            <label className="text-xs font-semibold text-slate-700 sm:col-span-2">
+              Support phone (optional, adds a “Call us” button on the offer)
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+919876543210" className={inputClass} />
+            </label>
+          </div>
+
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+            {preview.map((item) => {
+              const exists = existingKeys.has(`${item.name}|en_US`);
+              const result = results?.find((r) => r.name === item.name);
+              return (
+                <li key={item.name} className="p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-slate-800">
+                      {item.label} <span className="font-mono text-[11px] font-normal text-slate-400">{item.name}</span>
+                    </p>
+                    <span className="text-[10px] font-semibold text-slate-500">
+                      {item.category === "UTILITY" ? "Utility" : "Marketing"}
+                      {exists ? " • already on Meta, skipped" : ""}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-500">{item.purpose}</p>
+                  <p className="mt-1 whitespace-pre-wrap text-xs text-slate-600">{item.body}</p>
+                  {result && (
+                    <p className={`mt-1 text-[11px] font-semibold ${result.ok ? "text-emerald-700" : "text-red-600"}`}>
+                      {result.ok ? "✓" : "✗"} {result.text}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+
+          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
+
+          <p className="text-[11px] leading-5 text-slate-500">
+            Meta reviews every template (usually minutes, sometimes up to 24 hours) and may change the category.
+            Use “Sync Meta Status” to see approvals. Keep these exact names: the Shopify automation looks them up by name.
+          </p>
+
+          <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+            <button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              {results && !running ? "Done" : "Cancel"}
+            </button>
+            {!(results && !running) && (
+              <button
+                onClick={submitAll}
+                disabled={running || pending.length === 0}
+                className="flex items-center gap-2 rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {running && <Loader2 size={15} className="animate-spin" />}
+                {running ? "Submitting..." : pending.length === 0 ? "All already created" : `Submit ${pending.length} to Meta`}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function mapMetaStatus(status = "") {
   const normalized = status.toUpperCase();
   if (normalized === "APPROVED") return "Approved";
@@ -655,8 +853,14 @@ function mapMetaTemplate(item) {
     header: header?.format === "TEXT" ? header.text || "" : "",
     headerFormat: header?.format || "TEXT",
     body: body?.text || "",
+    bodyExamples: body?.example?.body_text?.[0] || [],
     footer: footer?.text || "",
-    buttons: (buttonComponent?.buttons || []).map((button) => button.text),
+    buttons: (buttonComponent?.buttons || []).map((button) => ({
+      type: button.type === "URL" || button.type === "PHONE_NUMBER" ? button.type : "QUICK_REPLY",
+      text: button.text || "",
+      url: button.url || "",
+      phone: button.phone_number || "",
+    })),
     media: null,
     image: "",
     broadcasts: "—",
@@ -673,6 +877,7 @@ function mapMetaTemplate(item) {
 
 function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMeta }) {
   const initialMedia = template ? getMedia(template) : null;
+  const isMeta = template?.source === "meta" && Boolean(template?.metaId);
 
   const [form, setForm] = useState(() => ({
     name: template?.name || "",
@@ -681,12 +886,17 @@ function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMe
     header: template?.header || "",
     body: template?.body || "",
     footer: template?.footer || "",
-    buttons: template?.buttons?.join(", ") || "",
-    bodyExamples: "",
+    buttons: (template?.buttons || []).map(normalizeButton),
+    bodyExamples: (template?.bodyExamples || []).join(", "),
   }));
 
   // media state
-  const [mediaKind, setMediaKind] = useState(initialMedia?.kind || "none");
+  const [mediaKind, setMediaKind] = useState(
+    initialMedia?.kind ||
+      (["IMAGE", "VIDEO", "DOCUMENT"].includes(template?.headerFormat)
+        ? template.headerFormat.toLowerCase()
+        : "none")
+  );
   const [existing, setExisting] = useState(initialMedia); // already saved media
   const [file, setFile] = useState(null); // newly picked file
   const [localUrl, setLocalUrl] = useState("");
@@ -713,6 +923,27 @@ function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMe
     setForm((previous) => ({
       ...previous,
       [event.target.name]: event.target.value,
+    }));
+  }
+
+  function addButton(type) {
+    setForm((previous) => ({
+      ...previous,
+      buttons: [...previous.buttons, { type, text: "", url: "", phone: "" }],
+    }));
+  }
+
+  function updateButton(index, patch) {
+    setForm((previous) => ({
+      ...previous,
+      buttons: previous.buttons.map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    }));
+  }
+
+  function removeButton(index) {
+    setForm((previous) => ({
+      ...previous,
+      buttons: previous.buttons.filter((_, i) => i !== index),
     }));
   }
 
@@ -767,8 +998,29 @@ function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMe
   })();
 
   async function submitToMeta() {
-    if (template?.source === "meta") {
-      alert("This template already exists in Meta. Create a new template with a different name instead.");
+    if (template?.source === "meta" && !isMeta) {
+      alert("This template has no Meta id yet. Click “Sync Meta Status” first, then edit it.");
+      return;
+    }
+
+    if (isMeta && template.status === "Pending") {
+      alert("This template is still in Meta review. Wait for the decision before editing it.");
+      return;
+    }
+
+    const buttonCheck = validateButtons(form.buttons);
+    if (buttonCheck.error) {
+      alert(buttonCheck.error);
+      return;
+    }
+
+    if (
+      isMeta &&
+      template.status === "Approved" &&
+      !window.confirm(
+        "Saving sends this template back to Meta for review. Meta allows one edit per 24 hours (max 10 per 30 days). Continue?"
+      )
+    ) {
       return;
     }
 
@@ -847,8 +1099,9 @@ function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMe
       headerHandle,
       body: form.body,
       footer: form.footer,
-      buttons: form.buttons.split(",").map((value) => value.trim()).filter(Boolean),
+      buttons: buttonCheck.buttons,
       bodyExamples: examples,
+      ...(isMeta ? { metaId: template.metaId } : {}),
     });
   }
 
@@ -901,9 +1154,10 @@ function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMe
         status: "Draft",
         image: "", // purana field, ab `media` use hota hai
         media,
-        buttons: form.buttons
+        buttons: form.buttons.filter((button) => button.text.trim()),
+        bodyExamples: form.bodyExamples
           .split(",")
-          .map((button) => button.trim())
+          .map((value) => value.trim())
           .filter(Boolean),
         broadcasts: template?.broadcasts || "0",
         delivery: template?.delivery || "—",
@@ -929,7 +1183,9 @@ function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMe
               {template ? "Edit Template" : "Create New Template"}
             </h2>
             <p className="mt-1 text-xs text-slate-500">
-              Create a WhatsApp message template draft.
+              {isMeta
+                ? "Edit this template. Saving sends it back to Meta for approval."
+                : "Create a template, then submit it to Meta for approval."}
             </p> 
           </div>
 
@@ -943,6 +1199,12 @@ function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMe
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 p-5">
+          {isMeta && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-900">
+              Name, language and category can't be changed after a template is created. Approved templates can be
+              edited once per 24 hours. If the template has an image, video or document header, pick the sample file again.
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="text-xs font-semibold text-slate-700">
               Template Name *
@@ -950,6 +1212,7 @@ function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMe
                 name="name"
                 value={form.name}
                 onChange={updateField}
+                disabled={isMeta}
                 placeholder="welcome_message"
                 className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                 required
@@ -962,6 +1225,7 @@ function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMe
                 name="category"
                 value={form.category}
                 onChange={updateField}
+                disabled={isMeta}
                 className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal outline-none focus:border-emerald-500"
               >
                 <option>Marketing</option>
@@ -975,6 +1239,7 @@ function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMe
                 name="language"
                 value={form.language}
                 onChange={updateField}
+                disabled={isMeta}
                 className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal outline-none focus:border-emerald-500"
               >
                 <option>English (US)</option>
@@ -1148,19 +1413,85 @@ function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMe
             />
           </label>
 
-          <label className="block text-xs font-semibold text-slate-700">
-            Buttons
-            <input
-              name="buttons"
-              value={form.buttons}
-              onChange={updateField}
-              placeholder="Visit Us, Call Us, Quick Reply"
-              className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none focus:border-emerald-500"
-            />
-            <span className="mt-1 block font-normal text-slate-400">
-              Separate button labels with commas.
-            </span>
-          </label>
+          <div className="rounded-xl border border-slate-200 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-slate-700">Buttons (optional)</p>
+
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  ["URL", "+ Website link", form.buttons.filter((b) => b.type === "URL").length >= 2],
+                  ["PHONE_NUMBER", "+ Call button", form.buttons.filter((b) => b.type === "PHONE_NUMBER").length >= 1],
+                  ["QUICK_REPLY", "+ Quick reply", false],
+                ].map(([type, label, full]) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => addButton(type)}
+                    disabled={full || form.buttons.length >= 10}
+                    className="rounded-lg bg-[#f2f4ff] px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {form.buttons.length === 0 ? (
+              <p className="mt-3 text-[11px] text-slate-400">No buttons. Add a website link, a call button or quick replies.</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {form.buttons.map((button, index) => (
+                  <div key={index} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                        {BUTTON_TYPE_LABEL[button.type] || "Button"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeButton(index)}
+                        className="flex items-center gap-1 text-[11px] font-semibold text-red-600 hover:underline"
+                      >
+                        <Trash2 size={12} /> Remove
+                      </button>
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <input
+                        value={button.text}
+                        onChange={(event) => updateButton(index, { text: event.target.value })}
+                        maxLength={25}
+                        placeholder="Button label (max 25)"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-emerald-500"
+                      />
+
+                      {button.type === "URL" && (
+                        <input
+                          value={button.url}
+                          onChange={(event) => updateButton(index, { url: event.target.value })}
+                          placeholder="https://yourstore.com/offer"
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-emerald-500"
+                        />
+                      )}
+
+                      {button.type === "PHONE_NUMBER" && (
+                        <input
+                          value={button.phone}
+                          onChange={(event) => updateButton(index, { phone: event.target.value })}
+                          placeholder="+919876543210"
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-emerald-500"
+                        />
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <p className="mt-2 text-[11px] text-slate-400">
+              Up to 2 website links, 1 call button and 10 buttons in total. Links must be full https:// addresses
+              without {"{{variables}}"}.
+            </p>
+          </div>
 
           <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
             <button
@@ -1171,20 +1502,22 @@ function TemplateModal({ template, onClose, onSave, onSubmitToMeta, submittingMe
               Cancel
             </button>
 
-            <button
-              type="submit"
-              disabled={saving || submittingMeta}
-              className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-            >
-              {saving ? "Saving..." : "Save Draft"}
-            </button>
+            {!isMeta && (
+              <button
+                type="submit"
+                disabled={saving || submittingMeta}
+                className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                {saving ? "Saving..." : "Save Draft"}
+              </button>
+            )}
             <button
               type="button"
               onClick={submitToMeta}
-              disabled={saving || submittingMeta || uploadingSample || template?.source === "meta"}
+              disabled={saving || submittingMeta || uploadingSample}
               className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {uploadingSample ? "Uploading sample..." : submittingMeta ? "Submitting..." : "Submit to Meta"}
+              {uploadingSample ? "Uploading sample..." : submittingMeta ? "Submitting..." : isMeta ? "Save & resubmit to Meta" : "Submit to Meta"}
             </button>
           </div>
         </form>
@@ -1228,10 +1561,12 @@ function JsonModal({ template, onClose }) {
         ? [
             {
               type: "BUTTONS",
-              buttons: template.buttons.map((text) => ({
-                type: "QUICK_REPLY",
-                text,
-              })),
+              buttons: template.buttons.map((item) => {
+                const button = normalizeButton(item);
+                if (button.type === "URL") return { type: "URL", text: button.text, url: button.url };
+                if (button.type === "PHONE_NUMBER") return { type: "PHONE_NUMBER", text: button.text, phone_number: button.phone };
+                return { type: "QUICK_REPLY", text: button.text };
+              }),
             },
           ]
         : []),
@@ -1297,6 +1632,7 @@ export default function Templates() {
   const [notice, setNotice] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [submittingMeta, setSubmittingMeta] = useState(false);
+  const [showStarter, setShowStarter] = useState(false);
 
   useEffect(() => {
     try {
@@ -1379,6 +1715,11 @@ export default function Templates() {
       id: Date.now(),
       name: `${template.name}_copy`,
       status: "Draft",
+      // a copy is a new local draft, never an edit of the Meta template
+      source: "local",
+      metaId: undefined,
+      metaStatus: undefined,
+      rejectedReason: "",
       broadcasts: "0",
       delivery: "—",
       health: "Not rated",
@@ -1390,9 +1731,29 @@ export default function Templates() {
     notify("Template duplicated as a draft.");
   }
 
-  function deleteTemplate(template) {
+  async function deleteTemplate(template) {
+    if (template.source === "meta" && template.metaId) {
+      if (!window.confirm(`Delete "${template.name}" (${template.language}) from Meta? This cannot be undone.`)) return;
+
+      try {
+        const response = await fetch(
+          `${API_BASE}/api/templates/${encodeURIComponent(template.name)}?hsm_id=${encodeURIComponent(template.metaId)}`,
+          { method: "DELETE" }
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.success) {
+          throw new Error(data.details?.error?.error_user_msg || data.message || "Could not delete the template from Meta.");
+        }
+        setTemplates((previous) => previous.filter((item) => item.id !== template.id));
+        notify("Template deleted from Meta.");
+      } catch (error) {
+        notify(error.message || "Delete failed.");
+      }
+      return;
+    }
+
     if (template.status !== "Draft") {
-      notify("Only drafts can be deleted in this demo.");
+      notify("Only drafts and Meta templates can be deleted.");
       return;
     }
 
@@ -1489,6 +1850,51 @@ function sendCampaign(template) {
   async function submitTemplateToMeta(payload) {
     setSubmittingMeta(true);
     try {
+      // EDIT: the template already exists on Meta -> update it and send it for review again
+      if (payload.metaId) {
+        const { metaId, ...editBody } = payload;
+        const editResponse = await fetch(`${API_BASE}/api/templates/${encodeURIComponent(metaId)}/edit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(editBody),
+        });
+        const editData = await editResponse.json().catch(() => ({}));
+
+        if (!editResponse.ok || !editData.success) {
+          const detail =
+            editData.details?.error?.error_user_msg ||
+            editData.details?.error?.message ||
+            editData.message;
+          throw new Error(detail || "Meta template update failed.");
+        }
+
+        const editedAt = new Date().toLocaleDateString();
+        setTemplates((previous) =>
+          previous.map((item) =>
+            item.metaId === metaId
+              ? {
+                  ...item,
+                  status: "Pending",
+                  metaStatus: "PENDING",
+                  header: editBody.header || "",
+                  headerFormat: editBody.headerFormat || "TEXT",
+                  body: editBody.body,
+                  bodyExamples: editBody.bodyExamples || [],
+                  footer: editBody.footer || "",
+                  buttons: editBody.buttons || [],
+                  rejectedReason: "",
+                  modified: editedAt,
+                  submittedAt: Date.now(),
+                }
+              : item
+          )
+        );
+
+        notify("Template updated and sent to Meta for review. Status: Pending.");
+        setEditor(null);
+        return;
+      }
+
       const response = await fetch(`${API_BASE}/api/templates`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1522,6 +1928,7 @@ function sendCampaign(template) {
         body: payload.body,
         footer: payload.footer || "",
         buttons: payload.buttons || [],
+        bodyExamples: payload.bodyExamples || [],
         media: null,
         image: "",
         broadcasts: "—",
@@ -1615,7 +2022,7 @@ function sendCampaign(template) {
         {/* HEADER ACTIONS */}
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={syncMeta}
+            onClick={() => syncMeta()}
             disabled={syncing}
             className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
           >
@@ -1633,6 +2040,14 @@ function sendCampaign(template) {
           >
             <SlidersHorizontal size={15} />
             Filter View
+          </button>
+
+          <button
+            onClick={() => setShowStarter(true)}
+            className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+          >
+            <Send size={15} />
+            Starter Templates
           </button>
 
           <button
@@ -1798,6 +2213,20 @@ function sendCampaign(template) {
           onSave={saveTemplate}
           onSubmitToMeta={submitTemplateToMeta}
           submittingMeta={submittingMeta}
+        />
+      )}
+
+      {showStarter && (
+        <StarterPackModal
+          existingKeys={
+            new Set(
+              templates
+                .filter((item) => item.source === "meta")
+                .map((item) => `${item.name}|${item.languageCode}`)
+            )
+          }
+          onClose={() => setShowStarter(false)}
+          onDone={() => syncMeta({ silent: true })}
         />
       )}
 

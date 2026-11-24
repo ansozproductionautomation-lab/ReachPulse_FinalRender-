@@ -15,6 +15,19 @@ import {
   UploadCloud,
 } from "lucide-react";
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+
+// UI label -> Meta language code (same codes the "Your Templates" page uses)
+const LANGUAGE_TO_META = {
+  "English (US)": "en_US",
+  "English (UK)": "en_GB",
+  Hindi: "hi",
+  Spanish: "es",
+  French: "fr",
+};
+
+const DEFAULT_SAMPLES = ["Rahul", "FESTIVE20", "20 October"];
+
 /* ================= MEDIA STORAGE (IndexedDB) =================
    Same DB / store name jo "Your Templates" page use karta hai,
    taaki yahan upload ki hui file wahan bhi dikhe.
@@ -113,7 +126,7 @@ export default function TemplateLibrary() {
   const [templateName, setTemplateName] = useState("diwali_festival_offer");
 
   const [category, setCategory] = useState("Marketing");
-  const [language, setLanguage] = useState("English");
+  const [language, setLanguage] = useState("English (US)");
 
   const [headerType, setHeaderType] = useState("Image");
 
@@ -124,7 +137,7 @@ export default function TemplateLibrary() {
   const [mediaUrl, setMediaUrl] = useState("");
 
   const [message, setMessage] = useState(
-    "Hello {{1}}, celebrate this festive season with an exclusive 20% discount on all premium items! Use your personalized code {{2}} at checkout before {{3}}."
+    "Hello {{1}}, celebrate this festive season with an exclusive 20% discount on all premium items! Use your personalized code {{2}} at checkout before {{3}}. Thank you for shopping with us!"
   );
 
   const [buttons, setButtons] = useState([
@@ -140,16 +153,20 @@ export default function TemplateLibrary() {
       text: "Call Customer Care",
       value: "+911234567890",
     },
-    {
-      id: 3,
-      type: "Copy Offer Code",
-      text: "Copy FESTIVE20",
-      value: "FESTIVE20",
-    },
   ]);
 
   const [showPreview, setShowPreview] = useState(true);
   const [notification, setNotification] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [sampleValues, setSampleValues] = useState({});
+
+  // Variables used in the body ({{1}}, {{2}}, ...) -> each needs a sample for Meta
+  const variableNumbers = [
+    ...new Set([...message.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]))),
+  ].sort((a, b) => a - b);
+
+  const sampleFor = (n) =>
+    (sampleValues[n] ?? DEFAULT_SAMPLES[n - 1] ?? "").trim() || `Sample ${n}`;
 
   // File select hote hi preview ke liye object URL banao
   useEffect(() => {
@@ -218,24 +235,18 @@ export default function TemplateLibrary() {
 
   const hasMediaHeader = ["Image", "Video", "Document"].includes(headerType);
 
-  const saveTemplate = async (status) => {
+  const notify = (text, ms = 5000) => {
+    setNotification(text);
+    window.setTimeout(() => setNotification(""), ms);
+  };
+
+  // Stores the template in the shared localStorage keys read by Your Templates
+  const persistTemplate = async (extra = {}) => {
     const cleanName = templateName.trim();
-
-    if (!cleanName) {
-      setNotification("Please enter a template name before saving.");
-      return;
-    }
-
-    if (!message.trim()) {
-      setNotification("Please enter a message body before saving.");
-      return;
-    }
-
-    // Media ko IndexedDB me save karo (Your Templates page yahin se padhega)
     let media = null;
 
     if (hasMediaHeader && mediaFile) {
-      const mediaId = `m_${Date.now()}`;
+      const mediaId = `m_${new Date().getTime()}`;
 
       try {
         await putBlob(mediaId, mediaFile);
@@ -259,7 +270,8 @@ export default function TemplateLibrary() {
       name: cleanName,
       category,
       language,
-      status: status === "pending" ? "Pending" : "Draft",
+      languageCode: LANGUAGE_TO_META[language] || language,
+      status: "Draft",
       header: headerType === "None" ? "" : headerText,
       image: "",
       media,
@@ -274,37 +286,167 @@ export default function TemplateLibrary() {
       health: "Not rated",
       created: now,
       modified: now,
+      ...extra,
     };
 
-    try {
-      const stored = JSON.parse(
-        localStorage.getItem("reachpulse_templates") || "[]"
-      );
-      const current = Array.isArray(stored) ? stored : [];
-      const updated = [
-        template,
-        ...current.filter((item) => item.name !== cleanName),
-      ];
+    const stored = JSON.parse(
+      localStorage.getItem("reachpulse_templates") || "[]"
+    );
+    const current = Array.isArray(stored) ? stored : [];
+    const updated = [
+      template,
+      ...current.filter((item) => item.name !== cleanName),
+    ];
 
-      // This is the shared storage key read by the Your Templates page.
-      localStorage.setItem("reachpulse_templates", JSON.stringify(updated));
-      localStorage.setItem("your_templates", JSON.stringify(updated));
+    localStorage.setItem("reachpulse_templates", JSON.stringify(updated));
+    localStorage.setItem("your_templates", JSON.stringify(updated));
+  };
 
-      setNotification(
-        status === "pending"
-          ? "Template saved as Pending. Meta approval requires a configured WhatsApp API."
-          : status === "draft"
-            ? "Draft saved. You can find it in Your Templates."
-            : "Template saved. You can find it in Your Templates."
-      );
-    } catch (error) {
-      console.error("Template save failed:", error);
-      setNotification(
-        "Could not save template in this browser. Please try again."
-      );
+  const checkBasics = () => {
+    if (!templateName.trim()) {
+      notify("Please enter a template name.", 4000);
+      return false;
     }
 
-    window.setTimeout(() => setNotification(""), 4000);
+    if (!message.trim()) {
+      notify("Please enter a message body.", 4000);
+      return false;
+    }
+
+    return true;
+  };
+
+  const saveDraft = async () => {
+    if (!checkBasics()) return;
+
+    try {
+      await persistTemplate({ status: "Draft" });
+      notify("Draft saved. You can find it in Your Templates.", 4000);
+    } catch (error) {
+      console.error("Draft save failed:", error);
+      notify("Could not save draft in this browser. Please try again.");
+    }
+  };
+
+  // Create the template on Meta right from the Template Library
+  const submitToMeta = async () => {
+    if (submitting || !checkBasics()) return;
+
+    const bodyText = message.trim();
+
+    // Meta also treats a variable as "at the end" when only punctuation/emoji
+    // follows it (e.g. "... before {{3}}."), so ignore those when checking.
+    if (
+      /^[^\p{L}\p{N}{]*\{\{\d+\}\}/u.test(bodyText) ||
+      /\{\{\d+\}\}[^\p{L}\p{N}}]*$/u.test(bodyText)
+    ) {
+      notify(
+        "Meta does not allow a variable at the very start or end of the body, even if only punctuation follows it. Add a few words after the last variable (e.g. “... before {{3}}. Thank you for shopping with us!”).",
+        9000
+      );
+      return;
+    }
+
+    const metaButtons = buttons.map((button) => {
+      const text = (button.text || "").trim();
+      const value = (button.value || "").trim();
+
+      if (button.type === "Website URL") return { type: "URL", text, url: value };
+      if (button.type === "Call Phone Number")
+        return { type: "PHONE_NUMBER", text, phone: value };
+      return { type: "QUICK_REPLY", text };
+    });
+
+    setSubmitting(true);
+
+    try {
+      // IMAGE / VIDEO / DOCUMENT header: Meta needs a sample file uploaded first
+      let headerFormat = "TEXT";
+      let headerHandle = "";
+
+      if (hasMediaHeader) {
+        if (!mediaFile) {
+          notify(
+            `Please choose a ${headerType.toLowerCase()} file. Meta needs a sample for the header.`,
+            6000
+          );
+          return;
+        }
+
+        const uploadResponse = await fetch(
+          `${API_BASE}/api/templates/upload-sample?kind=${MEDIA_RULES[headerType].kind}&filename=${encodeURIComponent(mediaFile.name || "sample")}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": mediaFile.type || "application/octet-stream",
+            },
+            body: mediaFile,
+          }
+        );
+        const uploadResult = await uploadResponse.json().catch(() => ({}));
+
+        if (!uploadResponse.ok || !uploadResult.headerHandle) {
+          throw new Error(
+            uploadResult.message || "Sample upload to Meta failed."
+          );
+        }
+
+        headerFormat = headerType.toUpperCase();
+        headerHandle = uploadResult.headerHandle;
+      }
+
+      const payload = {
+        name: templateName.trim(),
+        category: category.toUpperCase(),
+        language: LANGUAGE_TO_META[language] || "en_US",
+        header: headerType === "Text" ? headerText : "",
+        headerFormat,
+        headerHandle,
+        body: message,
+        footer: "",
+        buttons: metaButtons,
+        bodyExamples: variableNumbers.map(sampleFor),
+      };
+
+      const response = await fetch(`${API_BASE}/api/templates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.details?.error?.error_user_msg ||
+            data.details?.error?.message ||
+            data.message ||
+            "Meta template submission failed."
+        );
+      }
+
+      // Show it in Your Templates right away as Pending
+      try {
+        await persistTemplate({
+          status: "Pending",
+          metaStatus: "PENDING",
+          metaId: data.template?.id,
+          source: "meta",
+          submittedAt: new Date().getTime(),
+        });
+      } catch (error) {
+        console.warn("Local copy not saved:", error);
+      }
+
+      notify(
+        `Submitted to Meta for approval. Status: ${data.template?.status || "PENDING"}. Track it in Your Templates (Sync Meta Status).`,
+        8000
+      );
+    } catch (error) {
+      console.error("Meta submit failed:", error);
+      notify(error.message || "Could not submit template to Meta.", 8000);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   // Ek hi payload preview aur copy dono ke liye
@@ -324,7 +466,7 @@ export default function TemplateLibrary() {
     return {
       name: templateName,
       category,
-      language: language.toLowerCase(),
+      language: LANGUAGE_TO_META[language] || language,
       components: [
         ...(headerComponent ? [headerComponent] : []),
         {
@@ -373,10 +515,10 @@ export default function TemplateLibrary() {
     setTimeout(() => setNotification(""), 3500);
   };
 
-  const previewMessage = message
-    .replaceAll("{{1}}", "Rahul")
-    .replaceAll("{{2}}", "FESTIVE20")
-    .replaceAll("{{3}}", "20 October");
+  const previewMessage = variableNumbers.reduce(
+    (text, n) => text.replaceAll(`{{${n}}}`, sampleFor(n)),
+    message
+  );
 
   const rule = MEDIA_RULES[headerType];
 
@@ -432,8 +574,9 @@ export default function TemplateLibrary() {
               </h3>
 
               <p className="mt-1 text-xs leading-5 text-emerald-800">
-                Create your template, configure message variables, and prepare
-                it for submission through the WhatsApp Business Platform API.
+                Create your template and click “Create & Submit to Meta”. It is
+                sent for Meta approval directly from here and appears in Your
+                Templates as Pending.
               </p>
             </div>
           </div>
@@ -477,7 +620,6 @@ export default function TemplateLibrary() {
                 >
                   <option>Marketing</option>
                   <option>Utility</option>
-                  <option>Authentication</option>
                 </select>
               </div>
 
@@ -491,7 +633,8 @@ export default function TemplateLibrary() {
                   onChange={(e) => setLanguage(e.target.value)}
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-500"
                 >
-                  <option>English</option>
+                  <option>English (US)</option>
+                  <option>English (UK)</option>
                   <option>Hindi</option>
                   <option>Spanish</option>
                   <option>French</option>
@@ -650,6 +793,31 @@ export default function TemplateLibrary() {
               ))}
             </div>
 
+            {variableNumbers.length > 0 && (
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {variableNumbers.map((n) => (
+                  <div key={n}>
+                    <label className="mb-1.5 block text-[11px] font-medium text-slate-500">
+                      Sample for {"{{"}
+                      {n}
+                      {"}}"}
+                    </label>
+
+                    <input
+                      value={sampleValues[n] ?? DEFAULT_SAMPLES[n - 1] ?? ""}
+                      onChange={(e) =>
+                        setSampleValues((current) => ({
+                          ...current,
+                          [n]: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
             <p className="mt-3 text-[11px] leading-5 text-slate-400">
               Variables allow you to personalize messages using customer
               information. Ensure that each variable has a valid sample value
@@ -724,7 +892,6 @@ export default function TemplateLibrary() {
                         <option>Website URL</option>
                         <option>Call Phone Number</option>
                         <option>Quick Reply</option>
-                        <option>Copy Offer Code</option>
                       </select>
                     </div>
 
@@ -800,12 +967,12 @@ export default function TemplateLibrary() {
               onClick={() => {
                 setTemplateName("diwali_festival_offer");
                 setCategory("Marketing");
-                setLanguage("English");
+                setLanguage("English (US)");
                 setHeaderType("Image");
                 setHeaderText("Festival Special Offer");
                 setMediaFile(null);
                 setMessage(
-                  "Hello {{1}}, celebrate this festive season with an exclusive 20% discount on all premium items! Use your personalized code {{2}} at checkout before {{3}}."
+                  "Hello {{1}}, celebrate this festive season with an exclusive 20% discount on all premium items! Use your personalized code {{2}} at checkout before {{3}}. Thank you for shopping with us!"
                 );
                 setButtons([]);
                 setNotification("");
@@ -817,27 +984,21 @@ export default function TemplateLibrary() {
 
             <div className="flex flex-wrap gap-2">
               <button
-                onClick={() => saveTemplate("draft")}
-                className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold hover:bg-slate-50"
+                onClick={saveDraft}
+                disabled={submitting}
+                className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold hover:bg-slate-50 disabled:opacity-60"
               >
                 <Save size={14} />
                 Save Draft
               </button>
 
               <button
-                onClick={() => saveTemplate("saved")}
-                className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
-              >
-                <Save size={14} />
-                Save Template
-              </button>
-
-              <button
-                onClick={() => saveTemplate("pending")}
-                className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                onClick={submitToMeta}
+                disabled={submitting}
+                className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
               >
                 <Send size={14} />
-                Save & Submit Template
+                {submitting ? "Submitting to Meta..." : "Create & Submit to Meta"}
               </button>
             </div>
           </div>
