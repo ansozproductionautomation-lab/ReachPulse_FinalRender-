@@ -20,15 +20,18 @@ const server = http.createServer(app);
 
 const PORT = process.env.PORT || 5000;
 
-// Render frontend URL. FRONTEND_ORIGIN can contain comma-separated origins.
-const FRONTEND_ORIGIN =
-  process.env.FRONTEND_ORIGIN ||
-  'https://reachplus-whatsappautomation.onrender.com';
+// --------------------------------------------------
+// CORS CONFIGURATION
+// FRONTEND_ORIGIN (env) can contain comma-separated origins.
+// --------------------------------------------------
+
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '';
 
 const ALLOWED_ORIGINS = [
   ...new Set([
     ...FRONTEND_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean),
-    'https://reachplus-whatsappautomation.onrender.com',
+    'https://reachpulse-finalrender-1.onrender.com',
+    'https://reachplus-whatsappautomation.onrender.com', // old frontend (remove if no longer used)
     'http://localhost:5173',
   ]),
 ];
@@ -36,8 +39,10 @@ const ALLOWED_ORIGINS = [
 const WHATSAPP_API_VERSION =
   process.env.WHATSAPP_API_VERSION || 'v25.0';
 
-// Allow only the configured frontend origins (plus local Vite development).
+// Allow only the configured frontend origins (plus local development).
+// Used by both Express (REST API) and Socket.IO.
 function corsOrigin(origin, callback) {
+  // Requests with no Origin header (Meta webhooks, Shopify, curl, server-to-server).
   if (!origin || ALLOWED_ORIGINS.includes(origin)) {
     return callback(null, true);
   }
@@ -49,12 +54,18 @@ function corsOrigin(origin, callback) {
   return callback(null, isLocalDev);
 }
 
-// Apply CORS once, before all API routes. This also handles preflight requests.
-app.use(cors({
+const corsOptions = {
   origin: corsOrigin,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+  credentials: true,
+};
+
+// Apply CORS once, before all API routes.
+app.use(cors(corsOptions));
+
+// Handle preflight requests (uses the SAME restricted options).
+app.options(/.*/, cors(corsOptions));
 
 
 // --------------------------------------------------
@@ -65,6 +76,7 @@ const io = new Server(server, {
   cors: {
     origin: corsOrigin,
     methods: ['GET', 'POST'],
+    credentials: true,
   },
 });
 
