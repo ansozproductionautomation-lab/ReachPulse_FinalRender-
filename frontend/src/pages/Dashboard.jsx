@@ -19,7 +19,7 @@ import {
 
 /* ---------------- HELPERS ---------------- */
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+import { API_BASE } from '../lib/apiBase';
 const BROADCAST_CHUNK = 100; // server accepts max 500 contacts per request
 const MEDIA_FORMATS = ["IMAGE", "VIDEO", "DOCUMENT"];
 
@@ -175,7 +175,7 @@ const Dashboard = () => {
     } catch (error) {
       setStatsError(
         error.message === "Failed to fetch"
-          ? "Backend se connect nahi ho paya. Server (port 5000) chal raha hai?"
+          ? "Could not reach the backend. Check that the server is running and CORS is configured."
           : error.message
       );
     }

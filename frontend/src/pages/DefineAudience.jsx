@@ -110,7 +110,7 @@ const statusStyles = {
   Duplicate: "bg-amber-100 text-amber-700",
 };
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+import { API_BASE } from '../lib/apiBase';
 const AUDIENCE_API = API_BASE + "/api/audience";
 
 export default function DefineAudience() {

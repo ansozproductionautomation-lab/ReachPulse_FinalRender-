@@ -533,7 +533,7 @@ function TemplateCard({
 }
 
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+import { API_BASE } from '../lib/apiBase';
 
 const LANGUAGE_TO_META = {
   "English (US)": "en_US",

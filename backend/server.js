@@ -16,6 +16,9 @@ const createAutomationRouter = require('./routes/automation');
 const { maybeAutoReply } = require('./services/autoReply');
 
 const app = express();
+
+// Render terminates TLS in front of the app.
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 const PORT = process.env.PORT || 5000;
@@ -27,13 +30,20 @@ const PORT = process.env.PORT || 5000;
 
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '';
 
+// Normalise: trim, drop trailing slashes, ignore empties.
+const normalizeOrigin = (value) => String(value || '').trim().replace(/\/+$/, '');
+
 const ALLOWED_ORIGINS = [
-  ...new Set([
-    ...FRONTEND_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean),
-    'https://reachpulse-finalrender-1.onrender.com',
-    'https://reachplus-whatsappautomation.onrender.com', // old frontend (remove if no longer used)
-    'http://localhost:5173',
-  ]),
+  ...new Set(
+    [
+      ...FRONTEND_ORIGIN.split(','),
+      'https://reachpulse-finalrender-1.onrender.com',
+      'https://reachplus-whatsappautomation.onrender.com', // old frontend (remove if no longer used)
+      'http://localhost:5173',
+    ]
+      .map(normalizeOrigin)
+      .filter(Boolean)
+  ),
 ];
 
 const WHATSAPP_API_VERSION =
@@ -43,7 +53,7 @@ const WHATSAPP_API_VERSION =
 // Used by both Express (REST API) and Socket.IO.
 function corsOrigin(origin, callback) {
   // Requests with no Origin header (Meta webhooks, Shopify, curl, server-to-server).
-  if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+  if (!origin || ALLOWED_ORIGINS.includes(normalizeOrigin(origin))) {
     return callback(null, true);
   }
 
@@ -824,6 +834,10 @@ app.delete('/api/templates/:name', async (req, res) => {
 // --------------------------------------------------
 // HEALTH CHECK API
 // --------------------------------------------------
+
+app.get('/', (req, res) => {
+  res.json({ ok: true, service: 'wati-clone-backend' });
+});
 
 app.get('/api/health', (req, res) => {
   res.json({
@@ -2839,8 +2853,9 @@ async function start() {
       console.log('MONGODB_URI is not configured.');
     }
 
-    server.listen(PORT, () => {
-      console.log(`Backend listening on http://localhost:${PORT}`);
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`Backend listening on port ${PORT}`);
+      console.log('Allowed CORS origins:', ALLOWED_ORIGINS.join(', '));
     });
   } catch (error) {
     console.error('Backend startup failed:', error.message);

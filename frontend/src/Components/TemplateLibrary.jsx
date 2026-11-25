@@ -15,7 +15,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+import { API_BASE } from '../lib/apiBase';
 
 // UI label -> Meta language code (same codes the "Your Templates" page uses)
 const LANGUAGE_TO_META = {
