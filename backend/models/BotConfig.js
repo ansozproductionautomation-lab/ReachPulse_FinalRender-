@@ -7,6 +7,8 @@ const botConfigSchema = new mongoose.Schema(
   {
     key: { type: String, default: 'default', unique: true },
     enabled: { type: Boolean, default: false },
+    // When true, every reply is double-checked against the knowledge base before it is sent.
+    strictMode: { type: Boolean, default: true },
     instructions: {
       type: String,
       default:

@@ -17,7 +17,7 @@ const ghostBtn =
   'inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50';
 
 export default function Automation() {
-  const [cfg, setCfg] = useState({ enabled: false, instructions: '', tone: 'Friendly', fallbackMessage: '' });
+  const [cfg, setCfg] = useState({ enabled: false, strictMode: true, instructions: '', tone: 'Friendly', fallbackMessage: '' });
   const [loaded, setLoaded] = useState(false);
   const [items, setItems] = useState([]);
   const [query, setQuery] = useState('');
@@ -59,8 +59,8 @@ export default function Automation() {
   async function saveSettings() {
     setSaveState('saving');
     try {
-      const { instructions, tone, fallbackMessage } = cfg;
-      await saveBotConfig({ instructions, tone, fallbackMessage });
+      const { instructions, tone, fallbackMessage, strictMode } = cfg;
+      await saveBotConfig({ instructions, tone, fallbackMessage, strictMode });
       setSaveState('saved');
       setError('');
       setTimeout(() => setSaveState('idle'), 2000);
@@ -191,6 +191,19 @@ export default function Automation() {
                 ))}
               </div>
             </div>
+
+            <label htmlFor="bot-strict" className="flex cursor-pointer items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+              <input id="bot-strict" type="checkbox" checked={cfg.strictMode !== false}
+                onChange={(e) => setCfg({ ...cfg, strictMode: e.target.checked })}
+                className="mt-1 h-4 w-4 shrink-0 accent-emerald-700" />
+              <span>
+                <span className="block text-sm font-semibold text-slate-800">Strict mode: reply only from my training</span>
+                <span className="mt-0.5 block text-sm text-slate-600">
+                  Before every reply is sent, it is checked against your instructions and knowledge base.
+                  Anything not covered there is not sent; the chat goes to your team instead.
+                </span>
+              </span>
+            </label>
 
             <div className="flex flex-col gap-2">
               <label htmlFor="bot-fallback" className="text-sm font-semibold text-slate-800">Message when handing over to your team</label>

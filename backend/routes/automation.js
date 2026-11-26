@@ -18,6 +18,7 @@ module.exports = function createAutomationRouter(io) {
     const update = {};
 
     if (typeof body.enabled === 'boolean') update.enabled = body.enabled;
+    if (typeof body.strictMode === 'boolean') update.strictMode = body.strictMode;
     if (typeof body.instructions === 'string') update.instructions = body.instructions.slice(0, 4000);
     if (typeof body.fallbackMessage === 'string') update.fallbackMessage = body.fallbackMessage.slice(0, 1000);
     if (BotConfig.TONES.includes(body.tone)) update.tone = body.tone;

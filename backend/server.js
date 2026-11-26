@@ -11,9 +11,11 @@ const Message = require('./models/Message');
 const Audience = require('./models/Audience');
 const ScheduledJob = require('./models/ScheduledJob');
 const ShopifyEvent = require('./models/ShopifyEvent');
+const ShopifyActivity = require('./models/ShopifyActivity');
 const ConversationState = require('./models/ConversationState');
 const createAutomationRouter = require('./routes/automation');
 const { maybeAutoReply } = require('./services/autoReply');
+const { getOrderImageUrl, isHttps } = require('./services/shopifyImage');
 
 const app = express();
 
@@ -1996,6 +1998,7 @@ async function sendAutomationTemplate({
   params,
   campaignName,
   externalRef,
+  resolveHeaderImage, // optional async () => public https image link (order picture)
 }) {
   const fail = (message) => {
     const error = new Error(message);
@@ -2025,10 +2028,27 @@ async function sendAutomationTemplate({
     throw fail(`Template "${templateName}" (${language}) is not approved in Meta.`);
   }
 
+  let headerMedia = null;
+
   if (['IMAGE', 'VIDEO', 'DOCUMENT'].includes(info.headerFormat)) {
-    throw fail(
-      `Template "${templateName}" has a ${info.headerFormat} header. Automations support text-only templates.`
-    );
+    if (info.headerFormat !== 'IMAGE') {
+      throw fail(
+        `Template "${templateName}" has a ${info.headerFormat} header. Automations support text or IMAGE headers only.`
+      );
+    }
+
+    // The picture comes from the order (first product). Fallback: SHOPIFY_FALLBACK_IMAGE_URL.
+    let link = resolveHeaderImage ? await resolveHeaderImage() : '';
+    if (!isHttps(link)) link = process.env.SHOPIFY_FALLBACK_IMAGE_URL || '';
+
+    if (!isHttps(link)) {
+      throw fail(
+        `Template "${templateName}" has an IMAGE header but no picture was found for this order. ` +
+          'Set SHOPIFY_ADMIN_ACCESS_TOKEN (read_products) or SHOPIFY_FALLBACK_IMAGE_URL in .env.'
+      );
+    }
+
+    headerMedia = { kind: 'image', link };
   }
 
   if (params.length < info.bodyVars) {
@@ -2039,7 +2059,7 @@ async function sendAutomationTemplate({
 
   const cleaned = params.slice(0, info.bodyVars).map(cleanTemplateParam);
 
-  const apiResult = await sendCloudApiTemplate(waId, templateName, language, cleaned, null);
+  const apiResult = await sendCloudApiTemplate(waId, templateName, language, cleaned, headerMedia);
   const waMessageId = apiResult?.messages?.[0]?.id || null;
 
   if (dbReady) {
@@ -2103,6 +2123,8 @@ async function executeScheduledJob(job) {
         params: [p.name || 'there', p.orderNumber, p.total],
         campaignName: 'Shopify: Order confirmation',
         externalRef: `shopify:order:${p.orderId}`,
+        // Only called when the template has an IMAGE header.
+        resolveHeaderImage: () => getOrderImageUrl(job.shop, p.lineItems),
       });
     } else {
       const error = new Error(`Unknown job type "${job.type}".`);
@@ -2311,6 +2333,15 @@ async function processShopifyEvent(topic, data, options = {}) {
             orderId,
             orderNumber: data.order_number ?? data.name,
             total: `${data.total_price} ${data.currency}`,
+            // First items of the order, used to pick the picture for an IMAGE header template.
+            lineItems: (Array.isArray(data.line_items) ? data.line_items : [])
+              .slice(0, 5)
+              .map((item) => ({
+                productId: item.product_id || null,
+                variantId: item.variant_id || null,
+                title: String(item.title || item.name || '').slice(0, 120),
+                imageUrl: item.image?.src || item.image?.url || item.image_url || '',
+              })),
           },
         },
       },
@@ -2364,6 +2395,20 @@ async function processShopifyEvent(topic, data, options = {}) {
     return { queued: true, delayMinutes };
   }
 
+  if (topic === 'customers/create') {
+    if (!pickShopifyPhone({ customer: data })) {
+      return { queued: false, reason: 'customer has no phone number yet' };
+    }
+
+    // addCustomerToAudience expects an order-like object, so wrap the customer.
+    const saved = await addCustomerToAudience({ customer: data });
+    return {
+      queued: false,
+      contactAdded: Boolean(saved.added),
+      reason: saved.added ? 'added to contact list' : saved.reason,
+    };
+  }
+
   return { queued: false, reason: `topic "${topic}" is not used` };
 }
 
@@ -2405,9 +2450,12 @@ app.post('/webhooks/shopify', async (req, res) => {
     const result = await processShopifyEvent(topic, req.body || {}, { shop });
     console.log(`Shopify webhook ${topic}:`, JSON.stringify(result));
 
+    await logShopifyActivity(topic, req.body || {}, result, shop);
+
     return res.sendStatus(200);
   } catch (error) {
     console.error('Shopify webhook error:', error.message);
+    await logShopifyActivity(topic, req.body || {}, { error: error.message }, shop);
     return res.sendStatus(500); // Shopify will retry
   }
 });
@@ -2438,12 +2486,314 @@ app.post('/api/integrations/shopify/simulate', async (req, res) => {
 
   try {
     const result = await processShopifyEvent(topic, data, { shop: 'simulated', delayMinutes });
+    await logShopifyActivity(topic, data, result, 'simulated');
     await runDueJobs();
     return res.json({ success: true, result });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 });
+
+// SHOPIFY ACTIVITY LOG START
+// Every Shopify customer / checkout / order webhook is recorded here, so the ReachPulse
+// dashboard can show what arrived from Shopify and what the automation did with it.
+function maskPhone(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  return digits.length >= 4 ? `•••• ${digits.slice(-4)}` : '';
+}
+
+function buildShopifyActivity(topic, data, result) {
+  const d = data || {};
+  const person = (c) => [c?.first_name, c?.last_name].filter(Boolean).join(' ');
+  const money = (amount, currency) => (amount ? `${amount} ${currency || ''}`.trim() : '');
+  const customer = d.customer || {};
+  let a;
+
+  if (topic === 'customers/create') {
+    if (!d.id) return null;
+    a = {
+      kind: 'customer',
+      key: `customer:${d.id}`,
+      ref: String(d.id),
+      name: person(d),
+      phone: pickShopifyPhone({ customer: d }),
+      amount: '',
+      itemCount: 0,
+    };
+  } else if (topic === 'checkouts/create' || topic === 'checkouts/update') {
+    if (!d.token) return null;
+    a = {
+      kind: 'checkout',
+      key: `checkout:${d.token}`,
+      ref: String(d.token).slice(0, 8),
+      name: person(customer) || person(d.shipping_address) || person(d.billing_address),
+      phone: pickShopifyPhone(d),
+      amount: money(d.total_price, d.currency || d.presentment_currency),
+      itemCount: Array.isArray(d.line_items) ? d.line_items.length : 0,
+    };
+  } else if (topic === 'orders/create') {
+    const id = d.id ?? d.order_number;
+    if (!id) return null;
+    a = {
+      kind: 'order',
+      key: `order:${id}`,
+      ref: `#${d.order_number ?? id}`,
+      name: person(customer) || person(d.shipping_address) || person(d.billing_address),
+      phone: pickShopifyPhone(d),
+      amount: money(d.total_price, d.currency),
+      itemCount: Array.isArray(d.line_items) ? d.line_items.length : 0,
+    };
+  } else {
+    return null;
+  }
+
+  let outcome = 'skipped';
+  let note = result?.reason || '';
+
+  if (result?.error) {
+    outcome = 'error';
+    note = result.error;
+  } else if (result?.queued) {
+    outcome = 'queued';
+    note =
+      a.kind === 'checkout'
+        ? `Abandoned-cart message in ${result.delayMinutes ?? '?'} min`
+        : 'Order confirmation queued';
+  } else if (result?.contactAdded) {
+    outcome = 'added';
+    note = 'Added to contact list';
+  } else if (result?.reason === 'already in contact list') {
+    outcome = 'exists';
+    note = 'Already in contact list';
+  }
+
+  const { phone, ...rest } = a;
+  return {
+    ...rest,
+    name: String(a.name || '').slice(0, 100),
+    phoneMasked: maskPhone(phone),
+    hasPhone: Boolean(phone),
+    outcome,
+    note: String(note || '').slice(0, 300),
+  };
+}
+
+function publicShopifyActivity(item) {
+  return {
+    id: String(item._id),
+    kind: item.kind,
+    topic: item.topic,
+    name: item.name,
+    phoneMasked: item.phoneMasked,
+    hasPhone: item.hasPhone,
+    ref: item.ref,
+    amount: item.amount,
+    itemCount: item.itemCount,
+    outcome: item.outcome,
+    note: item.note,
+    events: item.events,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+}
+
+// Never throws: a logging problem must not stop the real automation.
+async function logShopifyActivity(topic, data, result, shop) {
+  try {
+    if (mongoose.connection.readyState !== 1) return;
+
+    const activity = buildShopifyActivity(topic, data, result);
+    if (!activity) return;
+
+    const { key, ...fields } = activity;
+    const saved = await ShopifyActivity.findOneAndUpdate(
+      { key },
+      { $set: { ...fields, topic, shop: shop || '' }, $inc: { events: 1 } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    // The customer bought: mark the matching checkout as converted.
+    if (activity.kind === 'order' && data?.checkout_token) {
+      await ShopifyActivity.updateOne(
+        { key: `checkout:${data.checkout_token}` },
+        { $set: { outcome: 'converted', note: 'Order placed' } }
+      );
+    }
+
+    io.emit('shopify:event', publicShopifyActivity(saved));
+  } catch (error) {
+    console.error('Could not log Shopify activity:', error.message);
+  }
+}
+
+// GET /api/integrations/shopify/events?limit=30
+app.get('/api/integrations/shopify/events', async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ success: false, message: 'MongoDB is not connected.' });
+  }
+
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [events, customers, checkouts, orders] = await Promise.all([
+      ShopifyActivity.find().sort({ updatedAt: -1 }).limit(limit).lean(),
+      ShopifyActivity.countDocuments({ kind: 'customer', createdAt: { $gte: since } }),
+      ShopifyActivity.countDocuments({ kind: 'checkout', createdAt: { $gte: since } }),
+      ShopifyActivity.countDocuments({ kind: 'order', createdAt: { $gte: since } }),
+    ]);
+
+    return res.json({
+      success: true,
+      counts: { customers, checkouts, orders }, // last 24 hours
+      events: events.map(publicShopifyActivity),
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+// SHOPIFY ACTIVITY LOG END
+
+// SHOPIFY TEMPLATE VERIFICATION START
+// GET /api/integrations/shopify/templates/verify
+// Checks, live in Meta, that the templates used by the Shopify automations exist, are
+// APPROVED and match what the automation sends. Optional: ?name=my_template&language=en_US
+// adds one more template (for example one used in a Shopify Flow action).
+const SHOPIFY_TEMPLATE_RULES = () => [
+  {
+    key: 'order_confirmation',
+    label: 'Order confirmation',
+    templateName: SHOPIFY_ORDER_TEMPLATE(),
+    expectedVars: 3, // {{1}} name, {{2}} order number, {{3}} total
+    allowedHeaders: ['NONE', 'TEXT', 'IMAGE'],
+  },
+  {
+    key: 'abandoned_cart',
+    label: 'Abandoned cart',
+    templateName: SHOPIFY_ABANDONED_TEMPLATE(),
+    expectedVars: 2, // {{1}} name, {{2}} checkout link
+    allowedHeaders: ['NONE', 'TEXT'],
+  },
+];
+
+async function verifyShopifyTemplate({ key, label, templateName, language, expectedVars, allowedHeaders }) {
+  const issues = [];
+  const warnings = [];
+
+  const result = await callMetaGraphApi(
+    'GET',
+    `${process.env.WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates` +
+      `?name=${encodeURIComponent(templateName)}` +
+      `&fields=id,name,status,language,category,components,rejected_reason`
+  );
+
+  const sameName = (result.data || []).filter((item) => item.name === templateName);
+  const template = sameName.find((item) => item.language === language);
+
+  const base = {
+    key,
+    label,
+    templateName,
+    language,
+    found: Boolean(template),
+    status: template?.status || 'NOT_FOUND',
+    category: template?.category || '',
+    rejectedReason: template?.rejected_reason && template.rejected_reason !== 'NONE'
+      ? template.rejected_reason
+      : '',
+    headerFormat: 'NONE',
+    bodyVars: 0,
+    expectedVars: expectedVars ?? null,
+  };
+
+  if (!template) {
+    issues.push(
+      sameName.length
+        ? `Template exists only in: ${sameName.map((item) => item.language).join(', ')}. Create it in ${language} or change SHOPIFY_TEMPLATE_LANGUAGE.`
+        : `Template "${templateName}" does not exist in Meta. Create it in Your Templates.`
+    );
+    return { ...base, issues, warnings, ready: false };
+  }
+
+  const header = (template.components || []).find((c) => c.type === 'HEADER');
+  const body = (template.components || []).find((c) => c.type === 'BODY');
+  base.headerFormat = header?.format || 'NONE';
+  base.bodyVars = new Set(
+    [...String(body?.text || '').matchAll(/\{\{(\d+)\}\}/g)].map((m) => m[1])
+  ).size;
+
+  if (template.status === 'PENDING') {
+    issues.push('Still waiting for Meta approval. Messages cannot be sent yet.');
+  } else if (template.status === 'REJECTED') {
+    issues.push(`Rejected by Meta${base.rejectedReason ? ` (${base.rejectedReason})` : ''}. Edit and resubmit it.`);
+  } else if (template.status !== 'APPROVED') {
+    issues.push(`Status is ${template.status}. Only APPROVED templates can be sent.`);
+  }
+
+  if (!allowedHeaders.includes(base.headerFormat)) {
+    issues.push(`${base.headerFormat} header is not supported for this automation.`);
+  }
+
+  if (expectedVars !== null) {
+    if (base.bodyVars > expectedVars) {
+      issues.push(`Template has ${base.bodyVars} variables but this automation sends only ${expectedVars}.`);
+    } else if (base.bodyVars < expectedVars) {
+      warnings.push(`Template uses ${base.bodyVars} of the ${expectedVars} values the automation sends. Extra values are ignored.`);
+    }
+  }
+
+  if (key === 'order_confirmation' && base.headerFormat === 'IMAGE') {
+    const hasToken = Boolean(process.env.SHOPIFY_ADMIN_ACCESS_TOKEN);
+    const hasFallback = isHttps(process.env.SHOPIFY_FALLBACK_IMAGE_URL);
+    if (!hasToken && !hasFallback) {
+      issues.push('IMAGE header needs SHOPIFY_ADMIN_ACCESS_TOKEN (order picture) or SHOPIFY_FALLBACK_IMAGE_URL in .env.');
+    } else if (!hasToken) {
+      warnings.push('No SHOPIFY_ADMIN_ACCESS_TOKEN: every order will use the fallback picture.');
+    }
+  }
+
+  return { ...base, issues, warnings, ready: issues.length === 0 };
+}
+
+app.get('/api/integrations/shopify/templates/verify', async (req, res) => {
+  if (!requireWabaConfig(res)) return;
+
+  try {
+    const language = String(req.query.language || SHOPIFY_TEMPLATE_LANGUAGE());
+    const checks = SHOPIFY_TEMPLATE_RULES().map((rule) => ({ ...rule, language }));
+
+    const extraName = String(req.query.name || '').trim();
+    if (extraName) {
+      checks.push({
+        key: 'custom',
+        label: 'Flow template',
+        templateName: extraName,
+        language,
+        expectedVars: null,
+        allowedHeaders: ['NONE', 'TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT'],
+      });
+    }
+
+    flowTemplateCache.clear(); // next automation send also sees the fresh status
+
+    const templates = [];
+    for (const check of checks) {
+      templates.push(await verifyShopifyTemplate(check));
+    }
+
+    return res.json({
+      success: true,
+      checkedAt: new Date().toISOString(),
+      language,
+      allReady: templates.every((item) => item.ready),
+      templates,
+    });
+  } catch (error) {
+    console.error('Shopify template verification error:', error.message);
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+});
+// SHOPIFY TEMPLATE VERIFICATION END
 
 // Recent automation jobs (to see what is waiting / sent / failed).
 app.get('/api/integrations/shopify/jobs', async (req, res) => {

@@ -20,6 +20,8 @@ import {
 /* ---------------- HELPERS ---------------- */
 
 import { API_BASE } from '../lib/apiBase';
+import ShopifyTemplateCheck from '../Components/ShopifyTemplateCheck';
+import ShopifyActivityFeed from '../Components/ShopifyActivityFeed';
 const BROADCAST_CHUNK = 100; // server accepts max 500 contacts per request
 const MEDIA_FORMATS = ["IMAGE", "VIDEO", "DOCUMENT"];
 
@@ -754,6 +756,12 @@ const Dashboard = () => {
           </span>
         </div>
       </section>
+
+      {/* SHOPIFY TEMPLATE VERIFICATION */}
+      <ShopifyTemplateCheck />
+
+      {/* SHOPIFY ACTIVITY (customers, checkouts, orders) */}
+      <ShopifyActivityFeed />
 
       {/* RECENT FAILURES */}
       {d.recentFailures?.length > 0 && (
