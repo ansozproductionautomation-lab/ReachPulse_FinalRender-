@@ -40,7 +40,7 @@ const ALLOWED_ORIGINS = [
     [
       ...FRONTEND_ORIGIN.split(','),
       'https://reachpulse-finalrender-1.onrender.com',
-      'https://reachplus-whatsappautomation.onrender.com', // old frontend (remove if no longer used)
+     // old frontend (remove if no longer used)
       'http://localhost:5173',
     ]
       .map(normalizeOrigin)

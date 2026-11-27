@@ -1,6 +1,6 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "e33e5ce28d2638e3b9b0c1cf1e3f3ee5"
+client_id = "99c552aefac34beb4d73f114c4477791"
 name = "ReachPulse-4"
 application_url = "https://shopify.dev/apps/default-app-home"
 embedded = true

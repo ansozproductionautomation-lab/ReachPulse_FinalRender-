@@ -1,0 +1,18 @@
+client_id = "99c552aefac34beb4d73f114c4477791"
+application_url = "https://reachpulse-finalrender-1.onrender.com"
+embedded = true
+name = "ReachPulseNew"
+
+[build]
+automatically_update_urls_on_dev = false
+
+[webhooks]
+api_version = "2026-10"
+
+[access_scopes]
+scopes = "read_orders,read_customers,read_products"
+optional_scopes = []
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = []
