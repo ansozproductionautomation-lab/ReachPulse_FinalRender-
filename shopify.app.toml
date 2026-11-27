@@ -1,16 +1,106 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "de7e9efb02685c971f15078b5eb72f68"
-application_url = "https://reachplus-whatsapp-1.onrender.com/dashboard"
+client_id = "e33e5ce28d2638e3b9b0c1cf1e3f3ee5"
+name = "ReachPulse-4"
+application_url = "https://shopify.dev/apps/default-app-home"
 embedded = true
-name = "ReachPulse-2"
+
+[[extensions]]
+name = "Send WhatsApp message"
+type = "flow_action"
+handle = "send-whatsapp-message"
+uid = "c0500372-81e0-0aff-8d98-3cbeeab3d63cdb71e487"
+description = "Send an approved WhatsApp template to a customer through ReachPulse."
+runtime_url = "https://reachplus-whatsapp-1.onrender.com/api/integrations/shopify-flow/action"
+
+[[settings.fields]]
+type = "single_line_text_field"
+key = "phone"
+name = "Customer phone"
+description = "Phone number with or without country code. Example: {{order.shippingAddress.phone}}"
+required = true
+
+[[settings.fields]]
+type = "single_line_text_field"
+key = "customer_name"
+name = "Customer name"
+description = "Optional. Shown in the inbox. Example: {{order.customer.firstName}}"
+required = false
+
+[[settings.fields]]
+type = "single_line_text_field"
+key = "template_name"
+name = "Template name"
+description = "Exact name of the APPROVED WhatsApp template. Example: order_confirmation"
+required = true
+
+[[settings.fields]]
+type = "single_line_text_field"
+key = "language"
+name = "Template language"
+description = "Meta language code. Leave empty for en_US. Example: hi"
+required = false
+
+[[settings.fields]]
+type = "single_line_text_field"
+key = "variable_1"
+name = "Variable 1"
+description = "Value for {{1}} in the template"
+required = false
+
+[[settings.fields]]
+type = "single_line_text_field"
+key = "variable_2"
+name = "Variable 2"
+description = "Value for {{2}} in the template"
+required = false
+
+[[settings.fields]]
+type = "single_line_text_field"
+key = "variable_3"
+name = "Variable 3"
+description = "Value for {{3}} in the template"
+required = false
+
+[[settings.fields]]
+type = "single_line_text_field"
+key = "variable_4"
+name = "Variable 4"
+description = "Value for {{4}} in the template"
+required = false
+
+[[settings.fields]]
+type = "single_line_text_field"
+key = "variable_5"
+name = "Variable 5"
+description = "Value for {{5}} in the template"
+required = false
+
+[[settings.fields]]
+type = "single_line_text_field"
+key = "header_media_url"
+name = "Header media link"
+description = "Only for templates with an image/video/document header. Public https link."
+required = false
+
+[[settings.fields]]
+type = "single_line_text_field"
+key = "reference"
+name = "Reference"
+description = "Optional. Use the order id so the same order never gets the same message twice. Example: {{order.id}}"
+required = false
+
+[webhooks]
+api_version = "2027-01"
 
 [access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_orders,read_customers,read_products"
 optional_scopes = []
 use_legacy_install_flow = false
 
 [auth]
-redirect_urls = []
+redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
 
-[webhooks]
-api_version = "2026-10"
+[build]
+automatically_update_urls_on_dev = true

@@ -1905,6 +1905,9 @@ function verifyShopifyHmac(rawBody, headerValue, secret) {
 }
 
 app.post('/api/integrations/shopify-flow/action', async (req, res) => {
+  // TEMP DEBUG: remove after testing
+  console.log('[FLOW ACTION] request aayi, hmac header:', !!req.get('x-shopify-hmac-sha256'));
+
   const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
 
   if (!clientSecret) {
@@ -1925,6 +1928,9 @@ app.post('/api/integrations/shopify-flow/action', async (req, res) => {
 
   const payload = req.body || {};
   const props = payload.properties || {};
+
+  // TEMP DEBUG: remove after testing (payload has customer phone)
+  console.log('[FLOW ACTION] payload:', JSON.stringify(payload));
 
   if (payload.handle && payload.handle !== FLOW_ACTION_HANDLE) {
     return res
