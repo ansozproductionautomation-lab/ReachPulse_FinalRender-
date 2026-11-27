@@ -11,7 +11,7 @@ type = "flow_action"
 handle = "send-whatsapp-message"
 uid = "c0500372-81e0-0aff-8d98-3cbeeab3d63cdb71e487"
 description = "Send an approved WhatsApp template to a customer through ReachPulse."
-runtime_url = "https://reachplus-whatsapp-1.onrender.com/api/integrations/shopify-flow/action"
+runtime_url = "https://reachplus-whatsapp.onrender.com/api/integrations/shopify-flow/action"
 
 [[settings.fields]]
 type = "single_line_text_field"
