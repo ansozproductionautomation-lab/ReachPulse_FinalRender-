@@ -6,7 +6,7 @@ handle = "send-whatsapp-message"
 uid = "c0500372-81e0-0aff-8d98-3cbeeab3d63cdb71e487"
 description = "Send an approved WhatsApp template to a customer through ReachPulse."
 # Your backend must be reachable on a public HTTPS address (see setup guide).
-runtime_url = "https://reachplus-whatsapp.onrender.com/api/integrations/shopify-flow/action"
+runtime_url = "https://reachpulse-finalrender.onrender.com/api/integrations/shopify-flow/action"
 
 [settings]
 
