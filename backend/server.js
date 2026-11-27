@@ -99,14 +99,9 @@ const io = new Server(server, {
 // Preserve raw webhook body for Meta signature verification.
 app.use(
   express.json({
-    limit: '15mb', // contact lists can be large
+    limit: '15mb',
     verify: (req, res, buffer) => {
-      if (
-        req.originalUrl.startsWith('/webhook') ||
-        req.originalUrl.startsWith('/api/integrations/shopify-flow/action')
-      ) {
-        req.rawBody = Buffer.from(buffer);
-      }
+      req.rawBody = Buffer.from(buffer);
     },
   })
 );
@@ -1896,17 +1891,51 @@ async function flowSendCore(req, res) {
 const FLOW_ACTION_HANDLE = 'send-whatsapp-message';
 
 function verifyShopifyHmac(rawBody, headerValue, secret) {
-  if (!rawBody || !headerValue || !secret) return false;
+  if (!Buffer.isBuffer(rawBody) || !headerValue || !secret) {
+    console.log('[HMAC DEBUG] Missing verification data', {
+      rawBodyAvailable: Buffer.isBuffer(rawBody),
+      headerAvailable: Boolean(headerValue),
+      secretAvailable: Boolean(secret),
+    });
 
-  const expected = crypto.createHmac('sha256', secret).update(rawBody).digest();
-  const given = Buffer.from(String(headerValue), 'base64');
+    return false;
+  }
 
-  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(rawBody)
+    .digest('base64');
+
+  const received = String(headerValue).trim();
+
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  const receivedBuffer = Buffer.from(received, 'utf8');
+
+  const valid =
+    expectedBuffer.length === receivedBuffer.length &&
+    crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+
+  console.log('[HMAC DEBUG]', {
+    rawBodyLength: rawBody.length,
+    expectedLength: expectedBuffer.length,
+    receivedLength: receivedBuffer.length,
+    secretHasWhitespace: secret !== secret.trim(),
+    signatureValid: valid,
+  });
+
+  return valid;
 }
 
 app.post('/api/integrations/shopify-flow/action', async (req, res) => {
-  // TEMP DEBUG: remove after testing
-  console.log('[FLOW ACTION] request aayi, hmac header:', !!req.get('x-shopify-hmac-sha256'));
+ console.log('[FLOW REQUEST DEBUG]', {
+  contentType: req.get('content-type'),
+  rawBodyAvailable: Buffer.isBuffer(req.rawBody),
+  hmacHeader: Boolean(req.get('x-shopify-hmac-sha256')),
+  alternateHmacHeader: Boolean(
+    req.get('http-x-shopify-hmac-sha256')
+  ),
+  headerNames: Object.keys(req.headers),
+});
 
   const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
 
@@ -1926,11 +1955,14 @@ app.post('/api/integrations/shopify-flow/action', async (req, res) => {
       .json({ success: false, message: 'Invalid Shopify signature.' });
   }
 
-  const payload = req.body || {};
-  const props = payload.properties || {};
+ const payload = req.body || {};
 
-  // TEMP DEBUG: remove after testing (payload has customer phone)
-  console.log('[FLOW ACTION] payload:', JSON.stringify(payload));
+const props =
+  payload.properties ||
+  payload['shopify::properties'] ||
+  payload;
+
+
 
   if (payload.handle && payload.handle !== FLOW_ACTION_HANDLE) {
     return res
