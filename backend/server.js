@@ -3086,9 +3086,13 @@ function validMetaSignature(req) {
 
 app.post('/webhook', async (req, res) => {
   console.log('[WEBHOOK]', {
-  signaturePresent: Boolean(req.get('x-hub-signature-256')),
   signatureValid: validMetaSignature(req),
-  fields: (req.body?.entry || []).flatMap((e) => (e.changes || []).map((c) => c.field)),
+  inboundMessages: (req.body?.entry || [])
+    .flatMap((e) => e.changes || [])
+    .reduce((n, c) => n + (c.value?.messages?.length || 0), 0),
+  statusUpdates: (req.body?.entry || [])
+    .flatMap((e) => e.changes || [])
+    .reduce((n, c) => n + (c.value?.statuses?.length || 0), 0),
 });
   if (!validMetaSignature(req)) {
     return res.status(401).send('Invalid webhook signature');
