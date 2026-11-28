@@ -16,6 +16,8 @@ const ConversationState = require('./models/ConversationState');
 const createAutomationRouter = require('./routes/automation');
 const { maybeAutoReply } = require('./services/autoReply');
 const { getOrderImageUrl, isHttps } = require('./services/shopifyImage');
+const createShopifyCustomersRouter = require('./routes/shopifyCustomers');
+const { saveShopifyCustomer } = require('./services/shopifyCustomerService');
 
 const app = express();
 
@@ -111,6 +113,12 @@ app.use(
 // --------------------------------------------------
 
 app.use('/api/automation', createAutomationRouter(io));
+
+// Shopify Customers page (list, Excel export, send template)
+app.use(
+  '/api/shopify-customers',
+  createShopifyCustomersRouter({ sendAutomationTemplate, recordFailedMessage })
+);
 
 // --------------------------------------------------
 // WHATSAPP CONFIGURATION CHECK
@@ -2033,6 +2041,7 @@ async function sendAutomationTemplate({
   phone,
   name,
   templateName,
+  language: languageOverride, // optional, defaults to SHOPIFY_TEMPLATE_LANGUAGE
   params,
   campaignName,
   externalRef,
@@ -2044,7 +2053,7 @@ async function sendAutomationTemplate({
     return error;
   };
 
-  const language = SHOPIFY_TEMPLATE_LANGUAGE();
+  const language = languageOverride || SHOPIFY_TEMPLATE_LANGUAGE();
   const waId = normalizeFlowPhone(phone);
 
   if (!waId) throw fail(`Invalid phone number "${phone || ''}".`);
@@ -2353,6 +2362,7 @@ async function processShopifyEvent(topic, data, options = {}) {
     }
 
     await addCustomerToAudience(data); // save the buyer in the contact list
+    await saveShopifyCustomer({ data, shop, waId: normalizeFlowPhone(phone) }); // Shopify Customers page
 
     const orderId = data.id ?? data.order_number;
 

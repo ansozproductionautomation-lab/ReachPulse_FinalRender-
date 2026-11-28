@@ -144,6 +144,21 @@ const Sidebar = () => {
           <span>Automation</span>
         </NavLink>
 
+        {/* SHOPIFY CUSTOMERS */}
+        <NavLink
+          to="/shopify-customers"
+          className={({ isActive }) =>
+            `flex h-8 items-center gap-2 rounded-md px-2.5 text-xs font-medium transition ${
+              isActive
+                ? "bg-emerald-600 text-white"
+                : "text-gray-600 hover:bg-gray-100 hover:text-emerald-700"
+            }`
+          }
+        >
+          <Users size={15} />
+          <span>Shopify Customers</span>
+        </NavLink>
+
 
       </nav>
 

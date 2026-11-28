@@ -1,4 +1,3 @@
-
 import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
@@ -11,6 +10,7 @@ import DefineAudience from "./pages/DefineAudience";
 import YourTemplate from "./pages/YourTemplate";
 import Inbox from "./pages/Inbox";
 import Automation from "./pages/Automation";
+import ShopifyCustomers from "./pages/ShopifyCustomers";
 
 const App = () => {
   return (
@@ -56,6 +56,9 @@ const App = () => {
 
             {/* Automation */}
             <Route path="/automation" element={<Automation />} />
+
+            {/* Shopify Customers */}
+            <Route path="/shopify-customers" element={<ShopifyCustomers />} />
 
             {/* Unknown routes */}
             <Route
