@@ -1270,6 +1270,13 @@ app.get('/webhook', (req, res) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
+  // DEBUG LOG: remove later.
+  console.log('[WEBHOOK GET]', {
+    mode,
+    verifyTokenSetOnServer: Boolean(process.env.WHATSAPP_VERIFY_TOKEN),
+    tokenMatches: Boolean(token) && token === process.env.WHATSAPP_VERIFY_TOKEN,
+  });
+
   if (
     mode === 'subscribe' &&
     token &&
@@ -3085,15 +3092,18 @@ function validMetaSignature(req) {
 // --------------------------------------------------
 
 app.post('/webhook', async (req, res) => {
-  console.log('[WEBHOOK]', {
-  signatureValid: validMetaSignature(req),
-  inboundMessages: (req.body?.entry || [])
-    .flatMap((e) => e.changes || [])
-    .reduce((n, c) => n + (c.value?.messages?.length || 0), 0),
-  statusUpdates: (req.body?.entry || [])
-    .flatMap((e) => e.changes || [])
-    .reduce((n, c) => n + (c.value?.statuses?.length || 0), 0),
-});
+  // DEBUG LOG: remove once the Inbox receives replies. No secrets are printed.
+  {
+    const changes = (req.body?.entry || []).flatMap((e) => e.changes || []);
+    console.log('[WEBHOOK POST]', {
+      signatureHeader: Boolean(req.get('x-hub-signature-256')),
+      appSecretSet: Boolean(process.env.WHATSAPP_APP_SECRET),
+      signatureValid: validMetaSignature(req),
+      inboundMessages: changes.reduce((n, c) => n + (c.value?.messages?.length || 0), 0),
+      statusUpdates: changes.reduce((n, c) => n + (c.value?.statuses?.length || 0), 0),
+    });
+  }
+
   if (!validMetaSignature(req)) {
     return res.status(401).send('Invalid webhook signature');
   }
