@@ -17,7 +17,7 @@ const createAutomationRouter = require('./routes/automation');
 const { maybeAutoReply } = require('./services/autoReply');
 const { getOrderImageUrl, isHttps } = require('./services/shopifyImage');
 const createShopifyCustomersRouter = require('./routes/shopifyCustomers');
-const { saveShopifyCustomer } = require('./services/shopifyCustomerService');
+const { saveShopifyCustomer, saveCustomerProfile } = require('./services/shopifyCustomerService');
 
 const app = express();
 
@@ -1729,6 +1729,13 @@ app.post('/api/integrations/shopify-flow/send', async (req, res) => {
 });
 
 // Shared by the "Send HTTP request" route above and the custom Flow action below.
+// Stores a Flow customer in Define Contacts (Audience) and in the Shopify Customers tab.
+// Both calls never throw, so a storage problem cannot stop the WhatsApp message.
+async function storeFlowCustomer({ shop, waId, name, template }) {
+  await addCustomerToAudience({ phone: `+${waId}`, customer: { first_name: name || '' } });
+  await saveCustomerProfile({ shop, waId, name, template });
+}
+
 async function flowSendCore(req, res) {
   if (!requireWabaConfig(res)) return;
 
@@ -1743,6 +1750,7 @@ async function flowSendCore(req, res) {
     headerFilename,
     reference,
     flowName,
+    shop,
     dryRun,
   } = req.body || {};
 
@@ -1776,6 +1784,8 @@ async function flowSendCore(req, res) {
       }).lean();
 
       if (duplicate) {
+        await storeFlowCustomer({ shop, waId, name, template: { name: templateName, waMessageId: duplicate.waMessageId } });
+
         return res.json({
           success: true,
           duplicate: true,
@@ -1861,6 +1871,9 @@ async function flowSendCore(req, res) {
       });
 
       io.emit('message:new', saved.toObject());
+
+      // Define Contacts + Shopify Customers tab: store the customer and the template that was sent.
+      await storeFlowCustomer({ shop, waId, name, template: { name: templateName, waMessageId } });
     }
 
     return res.json({ success: true, waMessageId, to: waId });
@@ -1870,6 +1883,9 @@ async function flowSendCore(req, res) {
       !error.status || error.status >= 500 || error.status === 429;
 
     console.error('Shopify Flow send error:', error.message);
+
+    // Keep the customer data even if WhatsApp refused the message.
+    if (dbReady && !dryRun) await storeFlowCustomer({ shop, waId, name });
 
     if (!retryable && dbReady && !dryRun) {
       await recordFailedMessage({
@@ -1988,6 +2004,7 @@ const props =
     headerMediaUrl: props.header_media_url,
     reference: props.reference || payload.action_run_id,
     flowName: payload.shopify_domain || 'Shopify Flow action',
+    shop: payload.shopify_domain || '',
   };
 
   return flowSendCore(req, res);
@@ -2450,6 +2467,20 @@ async function processShopifyEvent(topic, data, options = {}) {
 
     // addCustomerToAudience expects an order-like object, so wrap the customer.
     const saved = await addCustomerToAudience({ customer: data });
+
+    // Shopify Customers tab
+    await saveCustomerProfile({
+      shop,
+      waId: normalizeFlowPhone(pickShopifyPhone({ customer: data })),
+      name: [data.first_name, data.last_name].filter(Boolean).join(' '),
+      email: data.email,
+      customerId: data.id,
+      city: data.default_address?.city,
+      state: data.default_address?.province,
+      pincode: data.default_address?.zip,
+      acceptsMarketing:
+        data.accepts_marketing === true || data.email_marketing_consent?.state === 'subscribed',
+    });
     return {
       queued: false,
       contactAdded: Boolean(saved.added),

@@ -30,7 +30,7 @@ function extractOrderFields(data, shop) {
   return {
     orderId: text(data.id ?? data.order_number, 60),
     fields: {
-      shop: text(shop, 120),
+      shop: text(shop, 120).toLowerCase(),
       customerId: customer.id ? String(customer.id) : '',
       name: text(name, 120),
       email: text(data.email || customer.email, 160),
@@ -66,6 +66,7 @@ async function saveShopifyCustomer({ data, shop, waId }) {
       { ...filter, processedOrderIds: { $ne: orderId } },
       {
         $set: fields,
+        $min: { firstOrderDate: fields.lastOrderDate },
         $inc: { orderCount: 1 },
         $addToSet: { processedOrderIds: orderId },
       }
@@ -91,7 +92,12 @@ async function saveShopifyCustomer({ data, shop, waId }) {
       // Two webhooks created the same customer at the same moment: count this order on the winner.
       await ShopifyCustomer.updateOne(
         { ...filter, processedOrderIds: { $ne: orderId } },
-        { $set: fields, $inc: { orderCount: 1 }, $addToSet: { processedOrderIds: orderId } }
+        {
+          $set: fields,
+          $min: { firstOrderDate: fields.lastOrderDate },
+          $inc: { orderCount: 1 },
+          $addToSet: { processedOrderIds: orderId },
+        }
       );
       return { saved: true, created: false };
     }
@@ -101,4 +107,64 @@ async function saveShopifyCustomer({ data, shop, waId }) {
   }
 }
 
-module.exports = { saveShopifyCustomer };
+// Customer without an order: Shopify Flow "customer created" action and the customers/create webhook.
+// Creates the customer if missing, otherwise only fills fields that have a value.
+// `template` (optional) records a template that was already sent to this number.
+// `acceptsMarketing` must be true/false only when Shopify really told us; leave it undefined otherwise.
+// Never throws.
+async function saveCustomerProfile({
+  shop,
+  waId,
+  name,
+  email,
+  customerId,
+  city,
+  state,
+  pincode,
+  acceptsMarketing,
+  template,
+}) {
+  try {
+    if (!waId) return { saved: false, reason: 'no valid phone' };
+
+    const set = {};
+    if (text(name, 120)) set.name = text(name, 120);
+    if (text(email, 160)) set.email = text(email, 160);
+    if (customerId) set.customerId = String(customerId);
+    if (text(city, 80)) set.city = text(city, 80);
+    if (text(state, 80)) set.state = text(state, 80);
+    if (text(pincode, 20)) set.pincode = text(pincode, 20);
+
+    if (typeof acceptsMarketing === 'boolean') {
+      set.acceptsMarketing = acceptsMarketing;
+      set.whatsappOptIn = acceptsMarketing;
+    }
+
+    if (template?.name) {
+      set.templateStatus = 'Sent';
+      set.templateName = text(template.name, 80);
+      set.templateError = '';
+      set.messageSentAt = new Date();
+      set.whatsappMessageId = text(template.waMessageId, 120);
+    }
+
+    const update = {
+      $setOnInsert: { orderCount: 0, processedOrderIds: [] },
+    };
+    if (Object.keys(set).length) update.$set = set;
+
+    await ShopifyCustomer.updateOne(
+      { shop: text(shop, 120).toLowerCase(), phone: waId },
+      update,
+      { upsert: true }
+    );
+
+    return { saved: true };
+  } catch (error) {
+    // 11000 = two requests created the same customer at once; the data is already there.
+    if (error.code !== 11000) console.error('Could not save Shopify customer profile:', error.message);
+    return { saved: false, reason: error.message };
+  }
+}
+
+module.exports = { saveShopifyCustomer, saveCustomerProfile };
