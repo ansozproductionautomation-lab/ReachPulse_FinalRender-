@@ -20,6 +20,11 @@ const createShopifyCustomersRouter = require('./routes/shopifyCustomers');
 const { saveShopifyCustomer, saveCustomerProfile } = require('./services/shopifyCustomerService');
 
 const app = express();
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = Buffer.from(buf);
+  }
+}));
 
 // Render terminates TLS in front of the app.
 app.set('trust proxy', 1);
